@@ -42,6 +42,33 @@ const cleanupExpiredLoginSetups = () => {
   }
 };
 
+const createPasswordResetCode = () => String(crypto.randomInt(100000, 1000000));
+
+const hashResetCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+
+const sendPasswordResetEmail = async ({ to, name, code }) => {
+  try {
+    const transport = await getMailTransport();
+    if (!transport) return false;
+
+    const settings = await getMailSettingsResponse();
+    await transport.sendMail({
+      from: settings.smtpFromEmail || process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      subject: 'BarangayConnect Password Reset Code',
+      text: `Your BarangayConnect password reset code is: ${code}. It expires in 15 minutes. If you did not request this, ignore this message.`
+    });
+
+    return true;
+  } catch (err) {
+    console.error('sendPasswordResetEmail error:', err);
+    return false;
+  }
+};
+
+const buildPasswordResetDebugMessage = (code) =>
+  process.env.NODE_ENV === 'production' ? null : `SMTP not configured. Use this reset code for testing: ${code}`;
+
 const normalizeResetIdentifier = (value) => {
   const trimmed = String(value || '').trim();
   if (!trimmed) {
@@ -175,10 +202,10 @@ const createRegisteredUser = async (registrationPayload) => {
 
 const registrationValidator = [
   body('firstName').notEmpty().withMessage('First name is required'),
-  body('middleName').optional(),
+  body('middleName').optional({ checkFalsy: true }).trim(),
   body('lastName').notEmpty().withMessage('Last name is required'),
-  body('email').optional().isEmail().withMessage('Please provide a valid email'),
-  body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('email').optional({ checkFalsy: true }).trim().isEmail().withMessage('Please provide a valid email'),
+  body('password').optional({ checkFalsy: true }).isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   body('phoneNumber').notEmpty().withMessage('Phone number is required'),
   body('address.barangay').notEmpty().withMessage('Barangay is required'),
   body('address.purok').notEmpty().withMessage('Purok is required')
@@ -499,20 +526,6 @@ router.post('/login', [
 
       const isMatch = await admin.matchPassword(password);
       if (isMatch) {
-        // TEMPORARY: Skip 2FA for admin login (for testing)
-        if (!admin.authenticatorSecret) {
-          const token = generateToken(admin._id, true);
-          return res.json({
-            success: true,
-            message: 'Admin login successful (2FA bypassed for testing)',
-            data: {
-              token,
-              isAdmin: true,
-              admin: buildAdminResponse(admin)
-            }
-          });
-        }
-
         if (!admin.authenticatorSecret) {
           const setup = createLoginSetup(admin, 'admin');
           return res.status(200).json({
