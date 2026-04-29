@@ -53,7 +53,8 @@ const Login = () => {
       } else {
         // Login successful - redirect to dashboard
         console.log('Login successful, redirecting...');
-        navigate('/');
+        // Force page reload to ensure AuthContext state is properly set
+        window.location.href = '/';
       }
     } catch (error) {
       setError('Login failed');
