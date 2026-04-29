@@ -34,6 +34,7 @@ const Login = () => {
         : values;
 
       const result = await login(payload);
+      console.log('Login result:', result);
       if (!result.success) {
         if (result.requiresOtp) {
           setOtpStep(true);
@@ -51,6 +52,7 @@ const Login = () => {
         }
       } else {
         // Login successful - redirect to dashboard
+        console.log('Login successful, redirecting...');
         navigate('/');
       }
     } catch (error) {
