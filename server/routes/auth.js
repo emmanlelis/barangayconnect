@@ -21,10 +21,8 @@ const {
 const router = express.Router();
 const LOGIN_SETUP_EXPIRY_MS = 10 * 60 * 1000;
 const LOGIN_SETUP_MAX_ATTEMPTS = 5;
-const PASSWORD_RESET_EXPIRY_MS = 15 * 60 * 1000;
 const AUTHENTICATOR_ISSUER = 'BarangayConnect';
 const pendingLoginSetups = new Map();
-const pendingPasswordResets = new Map();
 
 // Generate JWT Token
 const generateToken = (id, isAdmin = false) => {
@@ -44,15 +42,6 @@ const cleanupExpiredLoginSetups = () => {
   }
 };
 
-const cleanupExpiredPasswordResets = () => {
-  const now = Date.now();
-  for (const [verificationId, entry] of pendingPasswordResets.entries()) {
-    if (entry.expiresAt <= now) {
-      pendingPasswordResets.delete(verificationId);
-    }
-  }
-};
-
 const normalizeResetIdentifier = (value) => {
   const trimmed = String(value || '').trim();
   if (!trimmed) {
@@ -66,55 +55,17 @@ const normalizeResetIdentifier = (value) => {
   return normalizePhoneNumber(trimmed);
 };
 
-const findUserForReset = async (identifier) => {
+const findAdminForReset = async (identifier) => {
   const normalizedIdentifier = normalizeResetIdentifier(identifier);
   if (!normalizedIdentifier) {
     return null;
   }
 
-  if (normalizedIdentifier.includes('@')) {
-    // Check admin first, then regular user
-    let admin = await Admin.findOne({ email: normalizedIdentifier }).select('+password +authenticatorSecret');
-    if (admin) {
-      admin.isAdmin = true;
-      return admin;
-    }
-    return User.findOne({ email: normalizedIdentifier }).select('+password +authenticatorSecret');
+  if (!normalizedIdentifier.includes('@')) {
+    return null;
   }
 
-  return User.findOne({ phoneNumber: normalizedIdentifier }).select('+password +authenticatorSecret');
-};
-
-const createPasswordResetCode = () => String(crypto.randomInt(100000, 1000000));
-
-const hashResetCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
-
-const sendPasswordResetEmail = async ({ to, name, code }) => {
-  const transport = await getMailTransport();
-  if (!transport) {
-    return false;
-  }
-
-  const settings = await getMailSettingsResponse();
-
-  await transport.sendMail({
-    from: settings.smtpFromEmail || process.env.SMTP_FROM || process.env.SMTP_USER,
-    to,
-    subject: 'BarangayConnect Password Reset Code',
-    text: `Hello ${name || 'there'},\n\nYour BarangayConnect password reset code is: ${code}\n\nThis code expires in 15 minutes. If you did not request this, you can safely ignore this email.`,
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #1f2937;">
-        <h2 style="margin: 0 0 12px; color: #0f172a;">Password Reset Code</h2>
-        <p>Hello ${name || 'there'},</p>
-        <p>Your BarangayConnect password reset code is:</p>
-        <div style="font-size: 28px; font-weight: 700; letter-spacing: 6px; padding: 16px 20px; background: #f8fafc; border: 1px solid #cbd5e1; display: inline-block; border-radius: 12px;">${code}</div>
-        <p style="margin-top: 16px;">This code expires in 15 minutes.</p>
-        <p>If you did not request this, you can ignore this email.</p>
-      </div>
-    `
-  });
-
-  return true;
+  return Admin.findOne({ email: normalizedIdentifier }).select('+password +authenticatorSecret');
 };
 
 const buildLoginSetupLabel = (account, accountType = 'user') => {
@@ -221,11 +172,6 @@ const createRegisteredUser = async (registrationPayload) => {
     }
   };
 };
-
-const buildPasswordResetDebugMessage = (code) =>
-  process.env.NODE_ENV === 'production'
-    ? null
-    : `SMTP is not configured. Use this reset code for testing: ${code}`;
 
 const registrationValidator = [
   body('firstName').notEmpty().withMessage('First name is required'),
@@ -707,11 +653,11 @@ router.post('/login', [
   }
 });
 
-// @desc    Request password reset code
+// @desc    Start admin password reset using authenticator
 // @route   POST /api/auth/forgot-password
 // @access  Public
 router.post('/forgot-password', [
-  body('identifier').notEmpty().withMessage('Email or phone number is required')
+  body('identifier').notEmpty().withMessage('Admin email is required')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -723,69 +669,40 @@ router.post('/forgot-password', [
       });
     }
 
-    cleanupExpiredPasswordResets();
-
-    const user = await findUserForReset(req.body.identifier);
-    if (!user || !user.isActive) {
+    const admin = await findAdminForReset(req.body.identifier);
+    if (!admin || !admin.isActive) {
       return res.json({
         success: true,
-        message: 'If the account exists, a password reset code has been sent.'
+        message: 'If the account exists, you can continue with authenticator verification.'
       });
     }
 
-    if (!user.email) {
+    if (!admin.authenticatorSecret) {
       return res.status(400).json({
         success: false,
-        message: 'This account does not have an email address on file. Please contact an administrator to reset the password.'
+        message: 'Authenticator is not set up for this admin account. Please contact a super admin.'
       });
     }
-
-    const resetCode = createPasswordResetCode();
-    const hashedResetCode = hashResetCode(resetCode);
-    const verificationId = crypto.randomUUID();
-    const expiresAt = Date.now() + PASSWORD_RESET_EXPIRY_MS;
-
-    pendingPasswordResets.set(verificationId, {
-      userId: String(user._id),
-      codeHash: hashedResetCode,
-      expiresAt,
-      attempts: 0
-    });
-
-    user.resetPasswordToken = hashedResetCode;
-    user.resetPasswordExpire = new Date(expiresAt);
-    await user.save();
-
-    const emailSent = await sendPasswordResetEmail({
-      to: user.email,
-      name: user.firstName,
-      code: resetCode
-    });
 
     res.json({
       success: true,
-      message: 'If the account exists, a password reset code has been sent.',
-      data: {
-        verificationId,
-        expiresInSeconds: Math.floor(PASSWORD_RESET_EXPIRY_MS / 1000),
-        ...(emailSent ? {} : { debugResetCode: resetCode, debugMessage: buildPasswordResetDebugMessage(resetCode) })
-      }
+      message: 'Account verified. Enter your authenticator code and new password.'
     });
   } catch (error) {
     console.error('Forgot password error:', error);
     res.status(500).json({
       success: false,
-      message: error?.message || 'Failed to create password reset code'
+      message: error?.message || 'Failed to start password reset'
     });
   }
 });
 
-// @desc    Reset password using code
+// @desc    Reset admin password using authenticator code
 // @route   POST /api/auth/reset-password
 // @access  Public
 router.post('/reset-password', [
-  body('identifier').notEmpty().withMessage('Email or phone number is required'),
-  body('code').isLength({ min: 6, max: 6 }).withMessage('Reset code must be 6 digits'),
+  body('identifier').notEmpty().withMessage('Admin email is required'),
+  body('otp').isLength({ min: 6, max: 6 }).withMessage('Authenticator code must be 6 digits'),
   body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters')
 ], async (req, res) => {
   try {
@@ -798,9 +715,7 @@ router.post('/reset-password', [
       });
     }
 
-    cleanupExpiredPasswordResets();
-
-    const { identifier, code, newPassword, confirmPassword } = req.body;
+    const { identifier, otp, newPassword, confirmPassword } = req.body;
     if (confirmPassword !== undefined && newPassword !== confirmPassword) {
       return res.status(400).json({
         success: false,
@@ -808,54 +723,34 @@ router.post('/reset-password', [
       });
     }
 
-    const user = await findUserForReset(identifier);
-    if (!user) {
+    const admin = await findAdminForReset(identifier);
+    if (!admin || !admin.isActive) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid reset code or account not found'
+        message: 'Invalid account for password reset'
       });
     }
 
-    const pendingEntry = Array.from(pendingPasswordResets.entries()).find(([, entry]) => entry.userId === String(user._id));
-    if (!pendingEntry) {
+    if (!admin.authenticatorSecret) {
       return res.status(400).json({
         success: false,
-        message: 'Reset code expired or invalid'
+        message: 'Authenticator is not set up for this admin account'
       });
     }
 
-    const [verificationId, entry] = pendingEntry;
-    if (entry.expiresAt <= Date.now()) {
-      pendingPasswordResets.delete(verificationId);
-      return res.status(400).json({
-        success: false,
-        message: 'Reset code expired or invalid'
-      });
-    }
-
-    entry.attempts += 1;
-    if (entry.attempts > 5) {
-      pendingPasswordResets.delete(verificationId);
-      return res.status(400).json({
-        success: false,
-        message: 'Too many incorrect attempts. Please request a new reset code.'
-      });
-    }
-
-    if (hashResetCode(code) !== entry.codeHash || user.resetPasswordToken !== entry.codeHash) {
-      pendingPasswordResets.set(verificationId, entry);
+    const normalizedOtp = String(otp || '').trim();
+    const otpValid = authenticator.check(normalizedOtp, admin.authenticatorSecret);
+    if (!otpValid) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid reset code'
+        message: 'Invalid authenticator code'
       });
     }
 
-    user.password = newPassword;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpire = undefined;
-    await user.save();
-
-    pendingPasswordResets.delete(verificationId);
+    admin.password = newPassword;
+    admin.resetPasswordToken = undefined;
+    admin.resetPasswordExpire = undefined;
+    await admin.save();
 
     res.json({
       success: true,

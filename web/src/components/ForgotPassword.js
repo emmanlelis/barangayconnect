@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, Typography, App as AntApp, Spin } from 'antd';
-import { MailOutlined, LockOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { Form, Input, Button, Card, Typography, App as AntApp } from 'antd';
+import { UserOutlined, LockOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import api from '../services/api';
 import './Login.css';
 
@@ -9,9 +9,8 @@ const { Title, Text } = Typography;
 const ForgotPassword = ({ onBack }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [step, setStep] = useState(1); // 1: email, 2: code+password
-  const [email, setEmail] = useState('');
-  const [verificationId, setVerificationId] = useState('');
+  const [step, setStep] = useState(1); // 1: identify admin, 2: otp+password
+  const [identifier, setIdentifier] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [form] = Form.useForm();
 
@@ -19,25 +18,18 @@ const ForgotPassword = ({ onBack }) => {
     setLoading(true);
     setError('');
     try {
-      const response = await api.post('/auth/forgot-password', {
-        identifier: values.email
-      });
+      const response = await api.post('/auth/forgot-password', { identifier: values.identifier });
 
-      if (response.data.success || response.data.data?.verificationId) {
-        setEmail(values.email);
-        setVerificationId(response.data.data?.verificationId);
+      if (response.data.success) {
+        setIdentifier(values.identifier);
         setStep(2);
-        setSuccessMessage(
-          response.data.data?.debugResetCode
-            ? `Debug Code: ${response.data.data.debugResetCode}`
-            : 'Password reset code sent to your email'
-        );
+        setSuccessMessage(response.data.message || 'Account verified. Enter your authenticator code.');
         form.resetFields();
       } else {
-        setError(response.data.message || 'Failed to request reset code');
+        setError(response.data.message || 'Failed to start password reset');
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to request reset code');
+      setError(err.response?.data?.message || 'Failed to start password reset');
     } finally {
       setLoading(false);
     }
@@ -54,8 +46,8 @@ const ForgotPassword = ({ onBack }) => {
       }
 
       const response = await api.post('/auth/reset-password', {
-        identifier: email,
-        code: values.code,
+        identifier,
+        otp: values.otp,
         newPassword: values.newPassword,
         confirmPassword: values.confirmPassword
       });
@@ -82,7 +74,7 @@ const ForgotPassword = ({ onBack }) => {
           <div className="login-header">
             <Title level={2}>Reset Admin Password</Title>
             <Text type="secondary">
-              {step === 1 ? 'Enter your email to receive a reset code' : 'Enter the reset code and new password'}
+              {step === 1 ? 'Enter your admin email' : 'Enter authenticator code and new password'}
             </Text>
           </div>
 
@@ -105,14 +97,14 @@ const ForgotPassword = ({ onBack }) => {
               autoComplete="off"
             >
               <Form.Item
-                name="email"
+                name="identifier"
                 rules={[
-                  { required: true, message: 'Please enter your email' },
+                  { required: true, message: 'Please enter your admin email' },
                   { type: 'email', message: 'Please enter a valid email' }
                 ]}
               >
                 <Input
-                  prefix={<MailOutlined />}
+                  prefix={<UserOutlined />}
                   placeholder="Admin Email"
                   size="large"
                   disabled={loading}
@@ -127,7 +119,7 @@ const ForgotPassword = ({ onBack }) => {
                   block
                   className="login-button"
                 >
-                  Send Reset Code
+                  Continue
                 </Button>
               </Form.Item>
 
@@ -149,15 +141,15 @@ const ForgotPassword = ({ onBack }) => {
               autoComplete="off"
             >
               <Form.Item
-                name="code"
+                name="otp"
                 rules={[
-                  { required: true, message: 'Please enter the reset code' },
-                  { pattern: /^\d{6}$/, message: 'Code must be 6 digits' }
+                  { required: true, message: 'Please enter your authenticator code' },
+                  { pattern: /^\d{6}$/, message: 'Authenticator code must be 6 digits' }
                 ]}
               >
                 <Input
                   prefix={<LockOutlined />}
-                  placeholder="6-digit reset code"
+                  placeholder="6-digit authenticator code"
                   size="large"
                   maxLength={6}
                   disabled={loading}
