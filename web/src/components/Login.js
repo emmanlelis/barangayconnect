@@ -74,6 +74,11 @@ const Login = () => {
       <div className="login-container">
         <Card className="login-card">
           <div className="login-header">
+            <img
+              src="/barangayconnect-logo.png"
+              alt="BarangayConnect Logo"
+              className="login-logo"
+            />
             <Title level={2}>BarangayConnect Admin</Title>
             <Text type="secondary">Login to manage complaints</Text>
           </div>

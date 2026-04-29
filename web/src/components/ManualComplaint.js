@@ -448,7 +448,7 @@ const ManualComplaint = () => {
       'Republic of the Philippines',
       'BarangayConnect - Notice of Mediation/Subpoena',
       '',
-      `Case: ${values.title || 'Manual Blotter Case'}`,
+      `Case: ${submittedCaseNumber || 'Manual Blotter Case'}`,
       `Complainant/Plaintiff: ${complainant}`,
       `Defendant/Respondent: ${respondent}`,
       '',
@@ -478,8 +478,7 @@ const ManualComplaint = () => {
       ? `<img src="${templateLogoDataUrl}" alt="${values.templateLogoAlt || 'Municipality Logo'}" style="max-height: 90px; max-width: 260px; object-fit: contain; display: inline-block;" />`
       : '';
     const todayDate = dayjs().format('MMMM DD, YYYY');
-    // Use submittedCaseNumber if available (after successful submission), otherwise fall back to title
-    const caseNumberValue = submittedCaseNumber || values.title || 'Manual Blotter Case';
+    const caseNumberValue = submittedCaseNumber || 'Manual Blotter Case';
 
     return {
       '{{case_title}}': caseNumberValue,
@@ -568,8 +567,8 @@ const ManualComplaint = () => {
   const getSubmittedGenerationValues = () => {
     const baseValues = {
       ...(submittedBlotterValues || {}),
-      title: submittedCaseNumber || submittedBlotterValues?.title || 'Manual Blotter Case',
-      caseNumber: submittedCaseNumber || submittedBlotterValues?.title || 'Manual Blotter Case',
+      title: submittedCaseNumber || 'Manual Blotter Case',
+      caseNumber: submittedCaseNumber || 'Manual Blotter Case',
       defendantName: submittedDefendantName || submittedBlotterValues?.defendantName || 'Defendant',
       defendantEmail: submittedDefendantEmail || submittedBlotterValues?.defendantEmail || '',
       defendantAddress: submittedDefendantAddress || submittedBlotterValues?.defendantAddress || ''
@@ -1069,9 +1068,6 @@ const ManualComplaint = () => {
       }
 
       const blotterData = {
-        title: submissionValues.title,
-        caseTitle: submissionValues.title,
-        blotterTitle: submissionValues.title,
         description: submissionValues.description,
         blotterDescription: submissionValues.description,
         category: submissionValues.category || 'Others',
@@ -1585,8 +1581,8 @@ const ManualComplaint = () => {
                   </Col>
 
                   <Col xs={24} md={12}>
-                    <Card size="small" title="Blotter Details">
-                      <p><Text strong>Title:</Text> {values.title || 'N/A'}</p>
+                            <Card size="small" title="Blotter Details">
+                              <p><Text strong>Subject:</Text> {values.title || 'N/A'}</p>
                       <p><Text strong>Category:</Text> {values.category || 'N/A'}</p>
                       <p><Text strong>Priority:</Text> {values.priority || 'N/A'}</p>
                       <p><Text strong>Location:</Text> {values.location || 'N/A'}</p>
@@ -1660,8 +1656,9 @@ const ManualComplaint = () => {
       ),
     },
     {
-      title: 'Letter Generation',
+      title: 'Generate Letter',
       content: (
+        <>
         <Form.Item noStyle shouldUpdate>
           {() => {
             const generationValues = getSubmittedGenerationValues();
@@ -1795,6 +1792,7 @@ const ManualComplaint = () => {
             );
           }}
         </Form.Item>
+        </>
       ),
     },
   ];

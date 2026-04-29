@@ -20,6 +20,13 @@
   margin-bottom: 32px;
 }
 
+.login-logo {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  margin-bottom: 12px;
+}
+
 .login-title {
   color: #1890ff !important;
   margin-bottom: 8px !important;
