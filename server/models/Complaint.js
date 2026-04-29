@@ -72,6 +72,25 @@ const complaintSchema = new mongoose.Schema({
     required: [true, 'Location is required'],
     trim: true
   },
+  isFilingComplaintAgainstSomeone: {
+    type: Boolean,
+    default: false
+  },
+  respondentName: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  respondentRelationship: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  respondentAddress: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   coordinates: {
     latitude: Number,
     longitude: Number

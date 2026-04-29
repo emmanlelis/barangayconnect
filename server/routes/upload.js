@@ -4,6 +4,37 @@ const { uploadSingle, uploadMultiple, uploadAttachmentAny, extractImageInfo, ext
 
 const router = express.Router();
 
+// @desc    Upload single image for public signup profile picture
+// @route   POST /api/upload/public-profile
+// @access  Public
+router.post('/public-profile', uploadSingle, handleUploadError, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    const imageInfo = extractImageInfo(req.file);
+
+    res.status(201).json({
+      success: true,
+      message: 'Profile image uploaded successfully',
+      data: {
+        image: imageInfo,
+        profilePicture: imageInfo.url
+      }
+    });
+  } catch (error) {
+    console.error('Public profile upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while uploading image'
+    });
+  }
+});
+
 // @desc    Upload single image
 // @route   POST /api/upload/single
 // @access  Private (User or Admin)

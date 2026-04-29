@@ -8,10 +8,12 @@ import {
   RefreshControl,
   Alert,
   TextInput,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import { adminAPI } from '../../services/api';
 
-const AdminComplaintsScreen = ({ navigation, route }) => {
+const AdminBlottersScreen = ({ navigation, route }) => {
   const [complaints, setComplaints] = useState([]);
   const [selectedFilter, setSelectedFilter] = useState(route.params?.status || 'All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,11 +57,11 @@ const AdminComplaintsScreen = ({ navigation, route }) => {
           setPage(prev => prev + 1);
         }
       } else {
-        Alert.alert('Error', response.message || 'Failed to load complaints');
+        Alert.alert('Error', response.message || 'Failed to load blotters');
       }
     } catch (error) {
-      console.error('Load complaints error:', error);
-      Alert.alert('Error', 'Failed to load complaints');
+      console.error('Load blotters error:', error);
+      Alert.alert('Error', 'Failed to load blotters');
     } finally {
       setIsLoading(false);
     }
@@ -108,7 +110,7 @@ const AdminComplaintsScreen = ({ navigation, route }) => {
   };
 
   const handleComplaintPress = (complaint) => {
-    navigation.navigate('AdminComplaintDetail', { id: complaint._id });
+    navigation.navigate('AdminBlotterDetail', { id: complaint._id });
   };
 
   const handleStatusUpdate = async (complaintId, newStatus) => {
@@ -127,7 +129,7 @@ const AdminComplaintsScreen = ({ navigation, route }) => {
               : complaint
           )
         );
-        Alert.alert('Success', 'Complaint status updated successfully');
+        Alert.alert('Success', 'Blotter status updated successfully');
       } else {
         Alert.alert('Error', response.message || 'Failed to update status');
       }
@@ -221,14 +223,14 @@ const AdminComplaintsScreen = ({ navigation, route }) => {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Manage Complaints</Text>
-        <Text style={styles.subtitle}>Review and update complaint status</Text>
+        <Text style={styles.title}>Manage Blotters</Text>
+        <Text style={styles.subtitle}>Review and update blotter status</Text>
       </View>
 
       <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search complaints..."
+          placeholder="Search blotters..."
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -272,13 +274,13 @@ const AdminComplaintsScreen = ({ navigation, route }) => {
       >
         {isLoading && complaints.length === 0 ? (
           <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Loading complaints...</Text>
+            <Text style={styles.loadingText}>Loading blotters...</Text>
           </View>
         ) : complaints.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No complaints found</Text>
+            <Text style={styles.emptyText}>No blotters found</Text>
             <Text style={styles.emptySubtext}>
-              {searchQuery ? 'Try adjusting your search' : `No ${selectedFilter.toLowerCase()} complaints`}
+              {searchQuery ? 'Try adjusting your search' : `No ${selectedFilter.toLowerCase()} blotters`}
             </Text>
           </View>
         ) : (
@@ -304,6 +306,7 @@ const styles = StyleSheet.create({
   header: {
     padding: 20,
     paddingBottom: 10,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 14 : 20,
   },
   backButton: {
     marginBottom: 10,
@@ -503,4 +506,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default AdminComplaintsScreen;
+export default AdminBlottersScreen;

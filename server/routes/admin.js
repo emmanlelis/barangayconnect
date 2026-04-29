@@ -1,32 +1,29 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const nodemailer = require('nodemailer');
+const { authenticator } = require('otplib');
 const Complaint = require('../models/Complaint');
 const Admin = require('../models/Admin');
 const User = require('../models/User');
 const Blotter = require('../models/Blotter');
 const { protectAdmin, authorize } = require('../middleware/auth');
+const { getMailTransport, getMailSettingsResponse } = require('../services/mailService');
+const cloudinary = require('cloudinary').v2;
+const {
+  createNotification,
+  createNotifications,
+  getAccountUpdateNotification,
+  getReceivedNotification,
+  getStatusNotification,
+  resolveBlotterRecipients
+} = require('../services/notificationService');
+const { buildAccountChangeLog } = require('../utils/accountChange');
 
 const router = express.Router();
 
 const normalizeEmail = (value) => (value || '').trim().toLowerCase();
-
-const getMailTransport = () => {
-  const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = process.env;
-
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-    return null;
-  }
-
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT),
-    secure: SMTP_SECURE === 'true' || Number(SMTP_PORT) === 465,
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS
-    }
-  });
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const notDeletedUserFilter = {
+  $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }]
 };
 
 // All admin routes require admin authentication
@@ -307,6 +304,25 @@ router.put('/complaints/:id/defendant', [
     complaint.mediationStatus = 'pending';
     await complaint.save();
 
+    const linkedBlotter = await Blotter.findOne({
+      isDeleted: false,
+      sourceComplaint: complaint._id
+    });
+
+    if (linkedBlotter) {
+      linkedBlotter.defendantUser = defendantId;
+      const defendantFullName = `${defendant.firstName || ''} ${defendant.lastName || ''}`.trim();
+      if (defendantFullName) {
+        linkedBlotter.respondent = defendantFullName;
+      }
+      await linkedBlotter.save();
+
+      await createNotification({
+        recipient: defendantId,
+        ...getReceivedNotification(linkedBlotter)
+      });
+    }
+
     // Populate after saving
     const updatedComplaint = await Complaint.findById(req.params.id)
       .populate('user', 'firstName lastName email')
@@ -463,31 +479,45 @@ router.post('/users', [
 router.get('/users', authorize('manage_users'), async (req, res) => {
   try {
     const { page = 1, limit = 20, search, isActive, filterType = 'active' } = req.query;
+    const pageNumber = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNumber = Math.max(parseInt(limit, 10) || 20, 1);
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    const normalizedSearchEmail = normalizeEmail(normalizedSearch);
 
-    // Build filter
-    const filter = filterType === 'recently-deleted'
-      ? { isDeleted: true }
-      : { isDeleted: false };
+    const andFilters = [];
 
-    if (isActive !== undefined) filter.isActive = isActive === 'true';
-
-    // Search functionality
-    if (search) {
-      filter.$or = [
-        { firstName: { $regex: search, $options: 'i' } },
-        { lastName: { $regex: search, $options: 'i' } },
-        { middleName: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phoneNumber: { $regex: search, $options: 'i' } }
-      ];
+    if (filterType === 'recently-deleted') {
+      andFilters.push({ isDeleted: true });
+    } else {
+      andFilters.push(notDeletedUserFilter);
     }
 
-    const skip = (page - 1) * limit;
+    if (isActive !== undefined) {
+      andFilters.push({ isActive: isActive === 'true' });
+    }
+
+    if (normalizedSearch) {
+      const safeSearchRegex = escapeRegex(normalizedSearch);
+      andFilters.push({
+        $or: [
+        { firstName: { $regex: safeSearchRegex, $options: 'i' } },
+        { lastName: { $regex: safeSearchRegex, $options: 'i' } },
+        { middleName: { $regex: safeSearchRegex, $options: 'i' } },
+        { email: { $regex: safeSearchRegex, $options: 'i' } },
+        { email: normalizedSearchEmail },
+        { phoneNumber: { $regex: safeSearchRegex, $options: 'i' } }
+        ]
+      });
+    }
+
+    const filter = andFilters.length === 1 ? andFilters[0] : { $and: andFilters };
+
+    const skip = (pageNumber - 1) * limitNumber;
 
     const users = await User.find(filter)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit))
+      .limit(limitNumber)
       .select('-password');
 
     const total = await User.countDocuments(filter);
@@ -497,11 +527,11 @@ router.get('/users', authorize('manage_users'), async (req, res) => {
       data: {
         users,
         pagination: {
-          current: parseInt(page),
-          total: Math.ceil(total / limit),
+          current: pageNumber,
+          total: Math.ceil(total / limitNumber),
           count: total,
-          hasNext: page * limit < total,
-          hasPrev: page > 1
+          hasNext: pageNumber * limitNumber < total,
+          hasPrev: pageNumber > 1
         }
       }
     });
@@ -519,12 +549,12 @@ router.get('/users', authorize('manage_users'), async (req, res) => {
 // @access  Private (Admin)
 router.get('/users/stats', authorize('manage_users'), async (req, res) => {
   try {
-    const totalUsers = await User.countDocuments({ isDeleted: false });
-    const activeUsers = await User.countDocuments({ isDeleted: false, isActive: true });
-    const inactiveUsers = await User.countDocuments({ isDeleted: false, isActive: false });
+    const totalUsers = await User.countDocuments(notDeletedUserFilter);
+    const activeUsers = await User.countDocuments({ ...notDeletedUserFilter, isActive: true });
+    const inactiveUsers = await User.countDocuments({ ...notDeletedUserFilter, isActive: false });
     const deletedUsers = await User.countDocuments({ isDeleted: true });
     const newUsersThisMonth = await User.countDocuments({
-      isDeleted: false,
+      ...notDeletedUserFilter,
       createdAt: {
         $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
       }
@@ -678,8 +708,10 @@ router.put('/users/:id', [
       });
     }
 
-    if (email && email !== user.email) {
-      const existingUser = await User.findOne({ email, _id: { $ne: user._id } });
+    const normalizedEmail = email ? email.trim().toLowerCase() : email;
+
+    if (normalizedEmail && normalizedEmail !== user.email) {
+      const existingUser = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } });
       if (existingUser) {
         return res.status(400).json({
           success: false,
@@ -688,11 +720,13 @@ router.put('/users/:id', [
       }
     }
 
+    const beforeUser = user.toObject();
+
     // Update fields
     if (firstName !== undefined) user.firstName = firstName;
     if (middleName !== undefined) user.middleName = middleName;
     if (lastName !== undefined) user.lastName = lastName;
-    if (email !== undefined) user.email = email;
+    if (email !== undefined) user.email = normalizedEmail;
     if (password) user.password = password;
     if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
     if (profilePicture !== undefined) user.profilePicture = profilePicture || null;
@@ -703,7 +737,29 @@ router.put('/users/:id', [
       };
     }
 
+    const changeLog = buildAccountChangeLog({
+      beforeUser,
+      afterUser: user.toObject(),
+      actorType: 'admin',
+      actorId: req.admin._id,
+      source: 'web-admin'
+    });
+
+    if (changeLog) {
+      user.accountChanges = [changeLog, ...(user.accountChanges || [])].slice(0, 20);
+    }
+
     await user.save();
+
+    await createNotification({
+      recipient: user._id,
+      ...getAccountUpdateNotification('profile_updated'),
+      metadata: {
+        updatedBy: req.admin?._id || null,
+        source: 'web-admin',
+        changedFields: changeLog?.changedFields || Object.keys(req.body || {}).filter((field) => field !== 'password')
+      }
+    });
 
     res.json({
       success: true,
@@ -719,7 +775,8 @@ router.put('/users/:id', [
           address: user.address,
           profilePicture: user.profilePicture,
           isActive: user.isActive,
-          isVerified: user.isVerified
+          isVerified: user.isVerified,
+          accountChanges: user.accountChanges || []
         }
       }
     });
@@ -732,12 +789,102 @@ router.put('/users/:id', [
   }
 });
 
+// @desc    Reset user password directly by admin
+// @route   PUT /api/admin/users/:id/reset-password
+// @access  Private (Admin)
+router.put('/users/:id/reset-password', [
+  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('otp').isLength({ min: 6, max: 6 }).withMessage('Authenticator code must be 6 digits')
+], authorize('manage_users'), async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array()
+      });
+    }
+
+    const { password, otp } = req.body;
+    const adminWithSecret = await Admin.findById(req.admin._id).select('+authenticatorSecret');
+
+    if (!adminWithSecret) {
+      return res.status(401).json({
+        success: false,
+        message: 'Admin account not found'
+      });
+    }
+
+    if (!adminWithSecret.authenticatorSecret) {
+      return res.status(400).json({
+        success: false,
+        message: 'Authenticator is not set up for this admin account'
+      });
+    }
+
+    const otpValid = authenticator.check(String(otp || '').trim(), adminWithSecret.authenticatorSecret);
+    if (!otpValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid authenticator code'
+      });
+    }
+
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (user.isDeleted) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot reset password for a deleted user'
+      });
+    }
+
+    user.password = password;
+
+    await user.save();
+
+    await createNotification({
+      recipient: user._id,
+      ...getAccountUpdateNotification('profile_updated'),
+      metadata: {
+        updatedBy: req.admin?._id || null,
+        source: 'web-admin-password-reset',
+        changedFields: ['password']
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'User password reset successfully'
+    });
+  } catch (error) {
+    console.error('Reset user password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while resetting user password'
+    });
+  }
+});
+
 // @desc    Delete user
 // @route   DELETE /api/admin/users/:id
 // @access  Private (Admin)
 router.delete('/users/:id', authorize('manage_users'), async (req, res) => {
   try {
-    const user = await User.findOne({ _id: req.params.id, isDeleted: false });
+    const user = await User.findOne({
+      $and: [
+        { _id: req.params.id },
+        notDeletedUserFilter
+      ]
+    });
     
     if (!user) {
       return res.status(404).json({
@@ -813,6 +960,45 @@ router.put('/users/:id/recover', authorize('manage_users'), async (req, res) => 
       success: false,
       message: 'Server error while recovering user'
     });
+  }
+});
+
+// @desc    Permanently delete a soft-deleted user (hard delete)
+// @route   POST /api/admin/users/:id/permanent-delete
+// @access  Private (Admin)
+router.post('/users/:id/permanent-delete', authorize('manage_users'), async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Admin password is required for permanent deletion' });
+    }
+
+    // Re-fetch admin with password for verification
+    const AdminModel = require('../models/Admin');
+    const adminWithPassword = await AdminModel.findById(req.admin._id).select('+password');
+
+    if (!adminWithPassword) {
+      return res.status(401).json({ success: false, message: 'Admin authentication failed' });
+    }
+
+    const isMatch = await adminWithPassword.matchPassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Incorrect admin password' });
+    }
+
+    // Ensure target user exists and is soft-deleted
+    const user = await User.findOne({ _id: req.params.id, isDeleted: true });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Deleted user not found' });
+    }
+
+    await User.deleteOne({ _id: user._id });
+
+    res.json({ success: true, message: 'User permanently deleted' });
+  } catch (error) {
+    console.error('Permanent delete user error:', error);
+    res.status(500).json({ success: false, message: 'Server error while permanently deleting user' });
   }
 });
 
@@ -943,7 +1129,7 @@ router.post('/blotters', [
 ], authorize('manage_complaints'), async (req, res) => {
   try {
     const validationErrors = [];
-    const { title, description, location, reportedBy, defendantName, category, priority, mediationRequired, mediationNotes, mediationDate, mediationTime, defendant, incidentDate, subpoenaEnabled, subpoenaSubject, subpoenaBody, complainantEmail, defendantEmail, sendSubpoenaEmail, attachments } = req.body;
+    const { title, description, location, reportedBy, defendantName, category, priority, mediationRequired, mediationNotes, mediationDate, mediationTime, defendant, defendantId, complainantId, complainantUser, incidentDate, subpoenaEnabled, subpoenaSubject, subpoenaBody, complainantEmail, defendantEmail, sendSubpoenaEmail, attachments } = req.body;
 
     const normalizedTitle = (title || req.body.caseTitle || req.body.blotterTitle || '').trim();
     const normalizedDescription = (description || req.body.blotterDescription || '').trim();
@@ -967,6 +1153,38 @@ router.post('/blotters', [
 
     const cleanComplainantEmail = normalizeEmail(complainantEmail);
     const cleanDefendantEmail = normalizeEmail(defendantEmail);
+    const selectedComplainantId = complainantId || complainantUser || null;
+    let selectedComplainant = null;
+    const selectedDefendantId = defendantId || defendant || null;
+    let selectedDefendant = null;
+
+    if (selectedComplainantId) {
+      selectedComplainant = await User.findOne({
+        _id: selectedComplainantId,
+        $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }]
+      }).select('firstName middleName lastName email phoneNumber address');
+
+      if (!selectedComplainant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Complainant account not found'
+        });
+      }
+    }
+
+    if (selectedDefendantId) {
+      selectedDefendant = await User.findOne({
+        _id: selectedDefendantId,
+        $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }]
+      }).select('firstName middleName lastName email phoneNumber address');
+
+      if (!selectedDefendant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Defendant account not found'
+        });
+      }
+    }
 
     // Generate case number (e.g., BL-2026-001)
     const year = new Date().getFullYear();
@@ -985,8 +1203,12 @@ router.post('/blotters', [
     // Create blotter record
     const blotterData = {
       caseNumber,
-      complainant: normalizedReportedBy,
-      respondent: normalizedDefendantName,
+      complainant: selectedComplainant
+        ? `${selectedComplainant.firstName || ''} ${selectedComplainant.lastName || ''}`.trim() || normalizedReportedBy
+        : normalizedReportedBy,
+      respondent: selectedDefendant
+        ? `${selectedDefendant.firstName || ''} ${selectedDefendant.lastName || ''}`.trim() || normalizedDefendantName
+        : normalizedDefendantName,
       description: normalizedDescription,
       location: normalizedLocation,
       status: mediationRequired === 'no' ? 'ongoing-no-mediation' : 'ongoing',
@@ -995,6 +1217,14 @@ router.post('/blotters', [
       dateOfMeeting: mediationDate ? new Date(mediationDate) : undefined,
       createdBy: req.admin._id
     };
+
+    if (selectedComplainant) {
+      blotterData.complainantUser = selectedComplainant._id;
+    }
+
+    if (selectedDefendant) {
+      blotterData.defendantUser = selectedDefendant._id;
+    }
 
     if (Array.isArray(attachments) && attachments.length > 0) {
       blotterData.attachments = attachments
@@ -1022,11 +1252,25 @@ router.post('/blotters', [
         subject: subpoenaSubject || '',
         body: subpoenaBody || '',
         complainantEmail: cleanComplainantEmail || undefined,
-        defendantEmail: cleanDefendantEmail || undefined
+        defendantEmail: cleanDefendantEmail || selectedDefendant?.email || undefined
       };
     }
 
     const blotter = await Blotter.create(blotterData);
+
+    if (selectedDefendant) {
+      await createNotification({
+        recipient: selectedDefendant._id,
+        ...getReceivedNotification(blotter)
+      });
+    }
+
+    if (selectedComplainant) {
+      await createNotification({
+        recipient: selectedComplainant._id,
+        ...getReceivedNotification(blotter)
+      });
+    }
 
     let subpoenaEmailResult = null;
     if (subpoenaEnabled && sendSubpoenaEmail) {
@@ -1038,21 +1282,71 @@ router.post('/blotters', [
           message: 'No recipient email addresses provided for subpoena sending.'
         };
       } else {
-        const transport = getMailTransport();
+        const transport = await getMailTransport();
         if (!transport) {
           subpoenaEmailResult = {
             success: false,
-            message: 'SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM_EMAIL in server/.env.'
+            message: 'SMTP is not configured. Please configure mail settings in the admin panel or set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM_EMAIL in server/.env.'
           };
         } else {
+          const mailSettings = await getMailSettingsResponse();
           try {
             await transport.sendMail({
-              from: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER,
+              from: mailSettings.fromEmail || mailSettings.user,
               to: recipients.join(', '),
               subject: subpoenaSubject || `Subpoena Notice - ${caseNumber}`,
               text: subpoenaBody || 'Please see subpoena details from BarangayConnect admin.',
               html: `<pre style="font-family: Arial, sans-serif; white-space: pre-wrap;">${(subpoenaBody || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`
             });
+
+            // Store generated subpoena document as an attachment (upload HTML as raw document)
+            try {
+              const htmlDoc = `<!doctype html><html><head><meta charset="utf-8"><title>Subpoena - ${caseNumber}</title></head><body>${(subpoenaBody || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>')}</body></html>`;
+              
+              const uploadResult = await new Promise((resolve, reject) => {
+                const uploadStream = cloudinary.uploader.upload_stream(
+                  {
+                    resource_type: 'raw',
+                    folder: 'barangay-connect/documents',
+                    public_id: `${caseNumber}_subpoena_${Date.now()}`,
+                    format: 'html'
+                  },
+                  (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                  }
+                );
+                uploadStream.end(Buffer.from(htmlDoc, 'utf-8'));
+              });
+
+              if (uploadResult && uploadResult.secure_url) {
+                blotter.attachments = Array.isArray(blotter.attachments) ? blotter.attachments : [];
+                blotter.attachments.push({
+                  filename: `${caseNumber}_subpoena.html`,
+                  url: uploadResult.secure_url,
+                  resourceType: 'document',
+                  format: uploadResult.format || 'html',
+                  size: uploadResult.bytes || uploadResult.size || 0,
+                  uploadedAt: new Date()
+                });
+                blotter.generatedDocuments = Array.isArray(blotter.generatedDocuments) ? blotter.generatedDocuments : [];
+                blotter.generatedDocuments.push({
+                  filename: `${caseNumber}_subpoena.html`,
+                  url: uploadResult.secure_url,
+                  resourceType: 'document',
+                  documentType: 'subpoena',
+                  subject: subpoenaSubject || `Subpoena Notice - ${caseNumber}`,
+                  body: subpoenaBody || '',
+                  sentTo: recipients,
+                  format: uploadResult.format || 'html',
+                  size: uploadResult.bytes || uploadResult.size || 0,
+                  uploadedAt: new Date()
+                });
+                await blotter.save();
+              }
+            } catch (uploadErr) {
+              console.error('Failed to upload subpoena document to Cloudinary:', uploadErr);
+            }
 
             blotter.subpoena = {
               ...(blotter.subpoena || {}),
@@ -1087,6 +1381,7 @@ router.post('/blotters', [
     // This simplifies the process and avoids data consistency issues
 
     await blotter.populate('createdBy', 'firstName lastName');
+    await blotter.populate('defendantUser', 'firstName middleName lastName email phoneNumber address');
 
     res.status(201).json({
       success: true,
@@ -1106,5 +1401,122 @@ router.post('/blotters', [
     });
   }
 });
+
+// @desc    Get mail settings
+// @route   GET /api/admin/mail-settings
+// @access  Private (Admin)
+router.get('/mail-settings', async (req, res) => {
+  try {
+    const settings = await getMailSettingsResponse();
+    res.json({
+      success: true,
+      data: settings
+    });
+  } catch (error) {
+    console.error('Get mail settings error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving mail settings',
+      error: error.message
+    });
+  }
+});
+
+// @desc    Save mail settings
+// @route   POST /api/admin/mail-settings
+// @access  Private (Admin)
+router.post('/mail-settings', 
+  authorize('admin'),
+  [
+    body('smtpHost').optional().trim().notEmpty(),
+    body('smtpPort').optional().isInt({ min: 1, max: 65535 }),
+    body('smtpSecure').optional().isBoolean(),
+    body('smtpUser').optional().trim(),
+    body('smtpPass').optional(),
+    body('smtpFromEmail').optional().trim(),
+    body('isActive').optional().isBoolean()
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: errors.array()
+        });
+      }
+
+      const { smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass, smtpFromEmail, isActive } = req.body;
+      
+      const result = await saveMailSettings({
+        smtpHost,
+        smtpPort: smtpPort ? Number(smtpPort) : undefined,
+        smtpSecure,
+        smtpUser,
+        smtpPass,
+        smtpFromEmail,
+        isActive,
+        updatedBy: req.admin._id
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('Save mail settings error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error saving mail settings',
+        error: error.message
+      });
+    }
+  }
+);
+
+// @desc    Test mail settings
+// @route   POST /api/admin/mail-settings/test
+// @access  Private (Admin)
+router.post('/mail-settings/test',
+  authorize('admin'),
+  [
+    body('smtpHost').optional().trim().notEmpty(),
+    body('smtpPort').optional().isInt({ min: 1, max: 65535 }),
+    body('smtpSecure').optional().isBoolean(),
+    body('smtpUser').optional().trim(),
+    body('smtpPass').optional(),
+    body('smtpFromEmail').optional().trim()
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation error',
+          errors: errors.array()
+        });
+      }
+
+      const { smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass, smtpFromEmail } = req.body;
+      
+      const result = await testMailSettings({
+        smtpHost,
+        smtpPort: smtpPort ? Number(smtpPort) : undefined,
+        smtpSecure,
+        smtpUser,
+        smtpPass,
+        smtpFromEmail
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('Test mail settings error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error testing mail settings',
+        error: error.message
+      });
+    }
+  }
+);
 
 module.exports = router;

@@ -43,6 +43,7 @@ api.interceptors.response.use(
 export const authAPI = {
   login: (credentials) => api.post('/auth/login', credentials),
   getProfile: () => api.get('/auth/admin/me'),
+  changeAdminPassword: (data) => api.put('/auth/admin/change-password', data),
 };
 
 // Admin Services
@@ -55,7 +56,9 @@ export const adminAPI = {
   createUser: (data) => api.post('/admin/users', data),
   updateUserStatus: (id, data) => api.put(`/admin/users/${id}/status`, data),
   updateUser: (id, data) => api.put(`/admin/users/${id}`, data),
+  resetUserPassword: (id, data) => api.put(`/admin/users/${id}/reset-password`, data),
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
+  hardDeleteUser: (id, data) => api.post(`/admin/users/${id}/permanent-delete`, data),
   recoverUser: (id) => api.put(`/admin/users/${id}/recover`),
   getComplaintDetail: (id) => api.get(`/admin/complaints/${id}`),
   getNotifications: () => api.get('/admin/notifications'),
@@ -79,10 +82,23 @@ export const adminAPI = {
   }),
   createComplaint: (data) => api.post('/complaints', data),
   createManualBlotter: (data) => api.post('/admin/blotters', data),
+  sendSubpoenaEmail: (caseNumber, data) => api.post('/blotters/subpoena-email', { caseNumber, ...data }),
   searchUsers: (params) => api.get('/admin/users', { params }),
   getMediationComplaints: () => api.get('/admin/complaints/mediation'),
   attachDefendant: (complaintId, data) => api.put(`/admin/complaints/${complaintId}/defendant`, data),
   scheduleMediation: (complaintId, data) => api.put(`/admin/complaints/${complaintId}/mediation`, data),
+  getDocumentTemplates: () => api.get('/admin/documents/templates'),
+  createDocumentTemplate: (data) => api.post('/admin/documents/templates', data),
+  updateDocumentTemplate: (templateKey, data) => api.put(`/admin/documents/templates/${templateKey}`, data),
+  deleteDocumentTemplate: (templateKey) => api.delete(`/admin/documents/templates/${templateKey}`),
+  
+  // Mail Settings
+  getMailSettings: () => api.get('/admin/mail-settings'),
+  saveMailSettings: (data) => api.post('/admin/mail-settings', data),
+  testMailSettings: (data) => api.post('/admin/mail-settings/test', data),
+  
+  // Calendar Schedule
+  getScheduledEvents: (params) => api.get('/blotters/scheduled', { params }),
 };
 
 // Complaint Services

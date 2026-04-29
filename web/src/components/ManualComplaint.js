@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Form, Input, Button, Card, Typography, Upload, Select, DatePicker, Calendar, TimePicker, message, Row, Col, Steps, Modal, Divider, Tag, Empty, Checkbox, Result } from 'antd';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Form, Input, Button, Card, Typography, Upload, Select, DatePicker, Calendar, TimePicker, message, Row, Col, Steps, Modal, Divider, Tag, Empty, Result, Popconfirm } from 'antd';
 import { FileTextOutlined, UploadOutlined, UserOutlined, PhoneOutlined, EnvironmentOutlined, TeamOutlined, UserAddOutlined, SearchOutlined, CheckOutlined } from '@ant-design/icons';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 import { useAuth } from '../contexts/AuthContext';
 import { adminAPI } from '../services/api';
 import dayjs from 'dayjs';
@@ -8,8 +10,28 @@ import dayjs from 'dayjs';
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Step } = Steps;
-const TEMPLATE_STORAGE_KEY = 'manualBlotterSubpoenaTemplates';
 const DRAFT_STORAGE_KEY = 'manualBlotterDraft';
+const RICH_TEXT_TOOLBAR = [
+  [{ header: [1, 2, 3, false] }],
+  ['bold', 'italic', 'underline', 'strike'],
+  [{ align: [] }],
+  [{ list: 'ordered' }, { list: 'bullet' }],
+  ['blockquote', 'link', 'image'],
+  ['clean']
+];
+const RICH_TEXT_FORMATS = [
+  'header',
+  'bold',
+  'italic',
+  'underline',
+  'strike',
+  'align',
+  'list',
+  'bullet',
+  'blockquote',
+  'link',
+  'image'
+];
 
 const ManualComplaint = () => {
   const [form] = Form.useForm();
@@ -40,25 +62,169 @@ const ManualComplaint = () => {
   const [draftFormValues, setDraftFormValues] = useState({});
   const [submissionComplete, setSubmissionComplete] = useState(false);
   const [submittedCaseNumber, setSubmittedCaseNumber] = useState('');
+  const [submittedBlotterValues, setSubmittedBlotterValues] = useState(null);
+  const [submittedDefendantName, setSubmittedDefendantName] = useState('');
+  const [submittedDefendantEmail, setSubmittedDefendantEmail] = useState('');
+  const [submittedDefendantAddress, setSubmittedDefendantAddress] = useState('');
+  const [sendingSubpoenaEmail, setSendingSubpoenaEmail] = useState(false);
   const isRestoringDraftRef = useRef(false);
+  const isClearingFormRef = useRef(false);
+  const generationEditorRef = useRef(null);
+  const templateEditorRef = useRef(null);
   const { user } = useAuth();
 
   const mediationRequired = Form.useWatch('mediationRequired', form);
-  const subpoenaEnabled = Form.useWatch('subpoenaEnabled', form);
 
-  useEffect(() => {
+  const normalizeSharedTemplate = (template) => ({
+    id: template.key || template.id,
+    name: template.name || template.key || 'Template',
+    subject: template.subjectTemplate || template.subject || '',
+    body: template.bodyTemplate || template.body || '',
+    logoDataUrl: template.headerImageUrl || template.logoDataUrl || '',
+    headerImageAlt: template.headerImageAlt || ''
+  });
+
+  const loadSharedTemplates = useCallback(async () => {
     try {
-      const savedTemplates = localStorage.getItem(TEMPLATE_STORAGE_KEY);
-      if (savedTemplates) {
-        const parsedTemplates = JSON.parse(savedTemplates);
-        if (Array.isArray(parsedTemplates)) {
-          setSubpoenaTemplates(parsedTemplates);
-        }
+      const response = await adminAPI.getDocumentTemplates();
+      if (response.data.success) {
+        const sharedTemplates = (response.data.data?.templates || []).map(normalizeSharedTemplate);
+        setSubpoenaTemplates(sharedTemplates);
       }
     } catch (error) {
-      console.error('Failed to load saved templates:', error);
+      console.error('Failed to load shared document templates:', error);
     }
   }, []);
+
+  const normalizeIncidentDateValue = (value) => {
+    if (!value) {
+      return null;
+    }
+
+    if (dayjs.isDayjs(value)) {
+      return value;
+    }
+
+    const normalizedValue = dayjs(value);
+    return normalizedValue.isValid() ? normalizedValue : null;
+  };
+
+  const normalizeMediationTimeValue = (value) => {
+    if (!value) {
+      return null;
+    }
+
+    if (dayjs.isDayjs(value)) {
+      return value;
+    }
+
+    const normalizedValue = dayjs(value, ['HH:mm', 'HH:mm:ss', dayjs.ISO_8601], true);
+    if (normalizedValue.isValid()) {
+      return normalizedValue;
+    }
+
+    const fallbackValue = dayjs(value);
+    return fallbackValue.isValid() ? fallbackValue : null;
+  };
+
+  const normalizeDraftValuesForForm = (values = {}) => ({
+    ...values,
+    incidentDate: normalizeIncidentDateValue(values.incidentDate),
+    mediationTime: normalizeMediationTimeValue(values.mediationTime)
+  });
+
+  const isHtmlContent = (value = '') => /<[^>]+>/.test(value);
+
+  const plainTextToHtml = (value = '') => String(value)
+    .split('\n')
+    .map((line) => (line.trim() ? line : '<br/>'))
+    .join('');
+
+  const templateBodyToEditorValue = (value = '') => {
+    if (!value) {
+      return '';
+    }
+
+    return isHtmlContent(value) ? value : plainTextToHtml(value);
+  };
+
+  const resolveUploadedImageUrl = (uploadResponse) => (
+    uploadResponse?.data?.data?.image?.url
+    || uploadResponse?.data?.data?.image?.secure_url
+    || uploadResponse?.data?.data?.image?.secureUrl
+    || uploadResponse?.data?.data?.image?.path
+    || ''
+  );
+
+  const handleInsertImageToEditor = useCallback(async (editorRef) => {
+    const input = document.createElement('input');
+    input.setAttribute('type', 'file');
+    input.setAttribute('accept', 'image/*');
+
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      try {
+        const formData = new FormData();
+        formData.append('image', file);
+
+        const uploadResponse = await adminAPI.uploadSingleImage(formData);
+        const imageUrl = resolveUploadedImageUrl(uploadResponse);
+
+        if (!imageUrl) {
+          message.error('Image upload succeeded but no URL was returned.');
+          return;
+        }
+
+        const quill = editorRef.current?.getEditor();
+        if (!quill) {
+          message.error('Editor is not ready. Please try again.');
+          return;
+        }
+
+        const selection = quill.getSelection(true);
+        const insertIndex = selection ? selection.index : quill.getLength();
+        quill.insertEmbed(insertIndex, 'image', imageUrl, 'user');
+        quill.setSelection(insertIndex + 1, 0, 'user');
+      } catch (error) {
+        console.error('Image insert error:', error.response?.data || error);
+        message.error(error.response?.data?.message || 'Failed to upload image');
+      }
+    };
+
+    input.click();
+  }, []);
+
+  const generationEditorModules = useMemo(() => ({
+    toolbar: {
+      container: RICH_TEXT_TOOLBAR,
+      handlers: {
+        image: () => handleInsertImageToEditor(generationEditorRef)
+      }
+    }
+  }), [handleInsertImageToEditor]);
+
+  const templateEditorModules = useMemo(() => ({
+    toolbar: {
+      container: RICH_TEXT_TOOLBAR,
+      handlers: {
+        image: () => handleInsertImageToEditor(templateEditorRef)
+      }
+    }
+  }), [handleInsertImageToEditor]);
+
+  useEffect(() => {
+    loadSharedTemplates();
+  }, [loadSharedTemplates]);
+
+  useEffect(() => {
+    if (currentStep === 5 || templateModalVisible) {
+      loadSharedTemplates();
+    }
+  }, [currentStep, templateModalVisible, loadSharedTemplates]);
 
   useEffect(() => {
     try {
@@ -77,11 +243,7 @@ const ManualComplaint = () => {
       }
 
       if (parsedDraft.formValues) {
-        const hydratedValues = { ...parsedDraft.formValues };
-
-        if (hydratedValues.incidentDate) {
-          hydratedValues.incidentDate = dayjs(hydratedValues.incidentDate);
-        }
+        const hydratedValues = normalizeDraftValuesForForm(parsedDraft.formValues);
 
         if (hydratedValues.subpoenaEnabled) {
           hydratedValues.subpoenaEnabled = true;
@@ -104,7 +266,7 @@ const ManualComplaint = () => {
       }
 
       if (parsedDraft.mediationTime) {
-        setMediationTime(dayjs(parsedDraft.mediationTime, 'HH:mm'));
+        setMediationTime(normalizeMediationTimeValue(parsedDraft.mediationTime));
       }
 
       if (parsedDraft.selectedDefendant) {
@@ -129,18 +291,13 @@ const ManualComplaint = () => {
     }
   }, []);
 
-  const persistTemplates = (templates) => {
-    setSubpoenaTemplates(templates);
-    localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
-  };
-
   const persistDraft = (nextValues = {}, baseValues = null) => {
-    if (isRestoringDraftRef.current) {
+    if (isRestoringDraftRef.current || isClearingFormRef.current) {
       return;
     }
 
     const currentValues = baseValues || form.getFieldsValue(true);
-    const mergedValues = { ...draftFormValues, ...currentValues, ...nextValues };
+    const mergedValues = normalizeDraftValuesForForm({ ...draftFormValues, ...currentValues, ...nextValues });
 
     setDraftFormValues(mergedValues);
 
@@ -172,11 +329,77 @@ const ManualComplaint = () => {
     }
 
     // Rehydrate fields for the currently visible step.
-    form.setFieldsValue(draftFormValues);
+      form.setFieldsValue(normalizeDraftValuesForForm(draftFormValues));
   }, [currentStep]);
 
   const clearDraft = () => {
     localStorage.removeItem(DRAFT_STORAGE_KEY);
+  };
+
+  const clearSubmittedFormInputs = () => {
+    isClearingFormRef.current = true;
+
+    clearDraft();
+    setDraftFormValues({});
+    setCurrentStep(0);
+    setFileList([]);
+    setMediationDate(null);
+    setMediationTime(null);
+    setSearchTerm('');
+    setSearchFirstName('');
+    setSearchLastName('');
+    setSearchResults([]);
+    setDefendantSearchFirstName('');
+    setDefendantSearchLastName('');
+    setDefendantSearchResults([]);
+    setSelectedDefendant(null);
+    setSelectedTemplateId('default');
+    setTemplateLogoDataUrl('');
+    setSendingSubpoenaEmail(false);
+
+    form.resetFields();
+    templateForm.resetFields();
+
+    window.setTimeout(() => {
+      isClearingFormRef.current = false;
+    }, 0);
+  };
+
+  const handleClearFilledFields = () => {
+    isClearingFormRef.current = true;
+
+    clearDraft();
+    setDraftFormValues({});
+    setCurrentStep(0);
+    setFileList([]);
+    setMediationDate(null);
+    setMediationTime(null);
+    setSearchTerm('');
+    setSearchFirstName('');
+    setSearchLastName('');
+    setSearchResults([]);
+    setDefendantSearchFirstName('');
+    setDefendantSearchLastName('');
+    setDefendantSearchResults([]);
+    setSelectedDefendant(null);
+    setSelectedTemplateId('default');
+    setTemplateLogoDataUrl('');
+    setSubmissionComplete(false);
+    setSubmittedCaseNumber('');
+    setSubmittedBlotterValues(null);
+    setSubmittedDefendantName('');
+    setSubmittedDefendantEmail('');
+    setSubmittedDefendantAddress('');
+    setSendingSubpoenaEmail(false);
+
+    form.resetFields();
+    templateForm.resetFields();
+
+    window.setTimeout(() => {
+      isClearingFormRef.current = false;
+    }, 0);
+
+    message.success('Manual blotter fields cleared');
   };
 
   const getSavedDraftValues = () => {
@@ -192,6 +415,24 @@ const ManualComplaint = () => {
       console.error('Failed to read saved draft values:', error);
       return {};
     }
+  };
+
+  const formatAddress = (address = '') => {
+    if (!address || typeof address === 'string') {
+      return address || '';
+    }
+
+    return [
+      address.street,
+      address.purok,
+      address.barangay,
+      address.city,
+      address.province,
+      address.zipCode
+    ]
+      .map((value) => (value || '').toString().trim())
+      .filter(Boolean)
+      .join(', ');
   };
 
   const buildDefaultSubpoenaBody = (values = {}) => {
@@ -231,24 +472,51 @@ const ManualComplaint = () => {
     const defendant = selectedDefendant
       ? `${selectedDefendant.firstName} ${selectedDefendant.lastName}`
       : values.defendantName || 'Defendant';
+    const complainantAddress = values.citizenAddress || values.complainantAddress || '';
+    const defendantAddress = formatAddress(selectedDefendant?.address) || values.defendantAddress || '';
+    const logoHtml = templateLogoDataUrl
+      ? `<img src="${templateLogoDataUrl}" alt="${values.templateLogoAlt || 'Municipality Logo'}" style="max-height: 90px; max-width: 260px; object-fit: contain; display: inline-block;" />`
+      : '';
+    const todayDate = dayjs().format('MMMM DD, YYYY');
+    // Use submittedCaseNumber if available (after successful submission), otherwise fall back to title
+    const caseNumberValue = submittedCaseNumber || values.title || 'Manual Blotter Case';
 
     return {
-      '{{case_title}}': values.title || 'Manual Blotter Case',
+      '{{case_title}}': caseNumberValue,
+      '{{caseNumber}}': caseNumberValue,
       '{{complainant_name}}': complainant,
+      '{{complainantName}}': complainant,
+      '{{complainantAddress}}': complainantAddress,
       '{{defendant_name}}': defendant,
+      '{{defendantName}}': defendant,
+      '{{defendantAddress}}': defendantAddress,
       '{{mediation_date}}': mediationDate ? mediationDate.format('MMMM DD, YYYY') : '[Set Date]',
+      '{{scheduleDate}}': mediationDate ? mediationDate.format('MMMM DD, YYYY') : '[Set Date]',
       '{{mediation_time}}': mediationTime ? mediationTime.format('HH:mm') : '[Set Time]',
+      '{{scheduleTime}}': mediationTime ? mediationTime.format('HH:mm') : '[Set Time]',
       '{{venue}}': values.location || '[Set Venue]',
+      '{{today}}': todayDate,
+      '{{todayDate}}': todayDate,
       '{{admin_name}}': `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Barangay Administrator',
-      '{{generated_at}}': new Date().toLocaleString()
+      '{{generated_at}}': new Date().toLocaleString(),
+      '{{logoHtml}}': logoHtml
     };
   };
 
-  const applyTokens = (templateText, values = {}) => {
+  const applyTokens = (templateText, values = {}, template = null) => {
     const tokens = getTemplateTokens(values);
     let output = templateText || '';
 
+    const logoHtml = template?.logoDataUrl
+      ? `<img src="${template.logoDataUrl}" alt="${template?.headerImageAlt || 'Municipality Logo'}" style="max-height: 90px; max-width: 260px; object-fit: contain; display: inline-block;" />`
+      : tokens['{{logoHtml}}'];
+
+    output = output.split('{{logoHtml}}').join(logoHtml);
+
     Object.entries(tokens).forEach(([token, value]) => {
+      if (token === '{{logoHtml}}') {
+        return;
+      }
       output = output.split(token).join(value);
     });
 
@@ -269,31 +537,98 @@ const ManualComplaint = () => {
     return subpoenaTemplates.find((template) => template.id === selectedTemplateId) || null;
   };
 
-  const applySelectedTemplate = () => {
-    const values = form.getFieldsValue(true);
-    const template = getSelectedTemplate();
+  const loadTemplateIntoEditor = (templateId) => {
+    const template = templateId === 'default'
+      ? {
+          id: 'default',
+          name: 'Default Template',
+          subject: 'Subpoena Notice - {{case_title}}',
+          body: buildDefaultSubpoenaBody(form.getFieldsValue(true)),
+          logoDataUrl: ''
+        }
+      : subpoenaTemplates.find((item) => item.id === templateId) || null;
 
     if (!template) {
-      message.warning('Please select a template first.');
       return;
     }
 
-    const subject = applyTokens(template.subject || 'Subpoena Notice - {{case_title}}', values);
-    const body = selectedTemplateId === 'default'
-      ? buildDefaultSubpoenaBody(values)
-      : applyTokens(template.body || '', values);
-
     form.setFieldsValue({
-      subpoenaSubject: subject,
-      subpoenaBody: body
+      subpoenaSubject: template.subject || 'Subpoena Notice - {{case_title}}',
+      subpoenaBody: templateBodyToEditorValue(template.body || '')
     });
 
     persistDraft({
-      subpoenaSubject: subject,
-      subpoenaBody: body
+      subpoenaSubject: template.subject || 'Subpoena Notice - {{case_title}}',
+      subpoenaBody: templateBodyToEditorValue(template.body || '')
+    });
+  };
+
+
+
+  const getSubmittedGenerationValues = () => {
+    const baseValues = {
+      ...(submittedBlotterValues || {}),
+      title: submittedCaseNumber || submittedBlotterValues?.title || 'Manual Blotter Case',
+      caseNumber: submittedCaseNumber || submittedBlotterValues?.title || 'Manual Blotter Case',
+      defendantName: submittedDefendantName || submittedBlotterValues?.defendantName || 'Defendant',
+      defendantEmail: submittedDefendantEmail || submittedBlotterValues?.defendantEmail || '',
+      defendantAddress: submittedDefendantAddress || submittedBlotterValues?.defendantAddress || ''
+    };
+
+    return baseValues;
+  };
+
+  const openSubpoenaGenerationPage = () => {
+    const template = getSelectedTemplate();
+
+    form.setFieldsValue({
+      subpoenaSubject: template?.subject || 'Subpoena Notice - {{caseNumber}}',
+      subpoenaBody: templateBodyToEditorValue(template?.body || '')
     });
 
-    message.success(`Template applied: ${template.name}`);
+    setCurrentStep(5);
+  };
+
+  const handleSendSubpoenaEmail = async () => {
+    const values = form.getFieldsValue(true);
+    const subject = values.subpoenaSubject || '';
+    const body = values.subpoenaBody || '';
+    const defendantEmail = submittedDefendantEmail || submittedBlotterValues?.defendantEmail || '';
+
+    if (!submittedCaseNumber) {
+      message.error('Missing case number for email sending.');
+      return;
+    }
+
+    if (!defendantEmail) {
+      message.warning('No defendant email is available for this blotter.');
+      return;
+    }
+
+    if (!subject || !body) {
+      message.warning('Please generate or fill out the subpoena letter before sending it by email.');
+      return;
+    }
+
+    setSendingSubpoenaEmail(true);
+    try {
+      const response = await adminAPI.sendSubpoenaEmail(submittedCaseNumber, {
+        subject,
+        body,
+        defendantEmail
+      });
+
+      if (response.data.success) {
+        message.success('Subpoena letter sent to the defendant successfully');
+      } else {
+        message.error(response.data.message || 'Failed to send subpoena email');
+      }
+    } catch (error) {
+      console.error('Error sending subpoena email:', error.response?.data || error);
+      message.error(error.response?.data?.message || 'Failed to send subpoena email');
+    } finally {
+      setSendingSubpoenaEmail(false);
+    }
   };
 
   const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
@@ -327,7 +662,7 @@ const ManualComplaint = () => {
     templateForm.setFieldsValue({
       name: '',
       subject: 'Subpoena Notice - {{case_title}}',
-      body: [
+      body: templateBodyToEditorValue([
         'Republic of the Philippines',
         'BarangayConnect - Notice of Mediation/Subpoena',
         '',
@@ -341,7 +676,7 @@ const ManualComplaint = () => {
         '',
         'Issued by: {{admin_name}}',
         'Generated on: {{generated_at}}'
-      ].join('\n')
+      ].join('\n'))
     });
   };
 
@@ -351,49 +686,84 @@ const ManualComplaint = () => {
     templateForm.setFieldsValue({
       name: template.name,
       subject: template.subject,
-      body: template.body
+      body: templateBodyToEditorValue(template.body)
     });
   };
 
   const saveTemplate = async () => {
     try {
       const values = await templateForm.validateFields();
-      const templatePayload = {
-        id: editingTemplateId || `tpl-${Date.now()}`,
+      const payload = {
         name: values.name,
-        subject: values.subject,
-        body: values.body,
-        logoDataUrl: templateLogoDataUrl || ''
+        subjectTemplate: values.subject,
+        bodyTemplate: values.body,
+        headerImageUrl: templateLogoDataUrl || '',
+        headerImageAlt: 'Municipality Logo'
       };
 
-      const nextTemplates = editingTemplateId
-        ? subpoenaTemplates.map((template) => template.id === editingTemplateId ? templatePayload : template)
-        : [...subpoenaTemplates, templatePayload];
+      let templateKey = editingTemplateId;
 
-      persistTemplates(nextTemplates);
-      setSelectedTemplateId(templatePayload.id);
-      persistDraft({ selectedTemplateId: templatePayload.id, templateLogoDataUrl: templatePayload.logoDataUrl });
+      if (editingTemplateId) {
+        const response = await adminAPI.updateDocumentTemplate(editingTemplateId, payload);
+        templateKey = response?.data?.data?.template?.key || editingTemplateId;
+      } else {
+        const response = await adminAPI.createDocumentTemplate(payload);
+        templateKey = response?.data?.data?.template?.key || '';
+      }
+
+      await loadSharedTemplates();
+
+      if (templateKey) {
+        setSelectedTemplateId(templateKey);
+        persistDraft({ selectedTemplateId: templateKey, templateLogoDataUrl: templateLogoDataUrl || '' });
+      }
+
       message.success('Template saved successfully');
       resetTemplateEditor();
     } catch (error) {
-      // Form validation handles user-facing errors.
+      if (!error?.errorFields) {
+        console.error('Failed to save template:', error);
+        message.error(error?.response?.data?.message || 'Failed to save template');
+      }
     }
   };
 
-  const deleteTemplate = (templateId) => {
-    const nextTemplates = subpoenaTemplates.filter((template) => template.id !== templateId);
-    persistTemplates(nextTemplates);
+  const deleteTemplate = async (templateId) => {
+    try {
+      await adminAPI.deleteDocumentTemplate(templateId);
+      await loadSharedTemplates();
 
-    if (selectedTemplateId === templateId) {
+      if (selectedTemplateId === templateId) {
+        setSelectedTemplateId('default');
+        persistDraft({ selectedTemplateId: 'default' });
+      }
+
+      if (editingTemplateId === templateId) {
+        resetTemplateEditor();
+      }
+
+      message.success('Template deleted');
+    } catch (error) {
+      console.error('Failed to delete template:', error);
+      message.error(error?.response?.data?.message || 'Failed to delete template');
+    }
+  };
+
+  const handleTemplateSelectChange = (templateId) => {
+    setSelectedTemplateId(templateId);
+    persistDraft({ selectedTemplateId: templateId });
+  };
+
+  const applyTemplateAndPersist = (templateId) => {
+    handleTemplateSelectChange(templateId);
+    loadTemplateIntoEditor(templateId);
+  };
+
+  const ensureTemplateSelected = () => {
+    if (selectedTemplateId !== 'default' && !subpoenaTemplates.some((template) => template.id === selectedTemplateId)) {
       setSelectedTemplateId('default');
       persistDraft({ selectedTemplateId: 'default' });
     }
-
-    if (editingTemplateId === templateId) {
-      resetTemplateEditor();
-    }
-
-    message.success('Template deleted');
   };
 
   const complaintTypes = [
@@ -479,6 +849,7 @@ const ManualComplaint = () => {
       .join(', ');
 
     form.setFieldsValue({
+      citizenUserId: selectedUser._id,
       citizenFirstName: selectedUser.firstName || '',
       citizenMiddleName: selectedUser.middleName || '',
       citizenLastName: selectedUser.lastName || '',
@@ -577,10 +948,10 @@ const ManualComplaint = () => {
   const handlePrintSubpoena = () => {
     const values = form.getFieldsValue(true);
     const selectedTemplate = getSelectedTemplate();
-    const subject = values.subpoenaSubject || applyTokens(selectedTemplate?.subject || 'Subpoena Notice - {{case_title}}', values);
+    const subject = values.subpoenaSubject || applyTokens(selectedTemplate?.subject || 'Subpoena Notice - {{case_title}}', values, selectedTemplate);
     const body = values.subpoenaBody || (selectedTemplateId === 'default'
       ? buildDefaultSubpoenaBody(values)
-      : applyTokens(selectedTemplate?.body || '', values));
+      : applyTokens(selectedTemplate?.body || '', values, selectedTemplate));
     const complainantName = values.citizenName || 'Complainant/Plaintiff';
     const defendantName = selectedDefendant
       ? `${selectedDefendant.firstName} ${selectedDefendant.lastName}`
@@ -593,6 +964,10 @@ const ManualComplaint = () => {
     }
 
     const safeText = (text) => (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const isHtmlBody = /<[^>]+>/.test(body);
+    const bodyHtml = isHtmlBody
+      ? body
+      : `<pre style="white-space: pre-wrap; margin: 0;">${safeText(body)}</pre>`;
 
     printWindow.document.write(`
       <!doctype html>
@@ -616,7 +991,7 @@ const ManualComplaint = () => {
         <div class="meta"><span class="label">Complainant/Plaintiff:</span> ${safeText(complainantName)}</div>
         <div class="meta"><span class="label">Defendant:</span> ${safeText(defendantName)}</div>
         <div class="meta"><span class="label">Printed on:</span> ${safeText(new Date().toLocaleString())}</div>
-        <div class="content">${safeText(body)}</div>
+        <div class="content">${bodyHtml}</div>
       </body>
       </html>
     `);
@@ -705,6 +1080,7 @@ const ManualComplaint = () => {
         reportedBy: submissionValues.citizenName,
         plaintiffName: submissionValues.citizenName,
         complainantName: submissionValues.citizenName,
+        complainantId: submissionValues.citizenUserId || null,
         defendantName: selectedDefendant ? `${selectedDefendant.firstName} ${selectedDefendant.lastName}` : 'TBD',
         incidentDate: submissionValues.incidentDate ? submissionValues.incidentDate.toISOString?.() || submissionValues.incidentDate : null,
         mediationRequired: submissionValues.mediationRequired,
@@ -725,20 +1101,26 @@ const ManualComplaint = () => {
       const response = await adminAPI.createManualBlotter(blotterData);
       
       if (response.data.success) {
+        setSubmittedBlotterValues({
+          ...submissionValues,
+          mediationDate: mediationDate ? mediationDate.format('MMMM DD, YYYY') : '',
+          mediationTime: mediationTime ? mediationTime.format('HH:mm') : ''
+        });
+        setSubmittedDefendantName(selectedDefendant ? `${selectedDefendant.firstName} ${selectedDefendant.lastName}` : 'Defendant');
+        setSubmittedDefendantEmail(selectedDefendant?.email || '');
+        setSubmittedDefendantAddress(formatAddress(selectedDefendant?.address));
+
         const emailResult = response.data.data.subpoenaEmailResult;
         if (emailResult && !emailResult.success) {
           message.warning(`Blotter logged, but subpoena email was not sent: ${emailResult.message || 'Email send failed'}`);
         }
-        form.resetFields();
-        setFileList([]);
-        setSelectedDefendant(null);
-        setDefendantSearchFirstName('');
-        setDefendantSearchLastName('');
-        setMediationDate(null);
-        setMediationTime(null);
-        setCurrentStep(4);
+        clearSubmittedFormInputs();
+        
+        const newCaseNumber = response.data.data.caseNumber || '';
+        setSubmittedCaseNumber(newCaseNumber);
         setSubmissionComplete(true);
-        setSubmittedCaseNumber(response.data.data.caseNumber || '');
+        setCurrentStep(4);
+
         clearDraft();
       } else {
         message.error(response.data.message || 'Failed to log blotter');
@@ -1135,101 +1517,15 @@ const ManualComplaint = () => {
                       setMediationTime(time);
                       persistDraft({ mediationTime: time ? time.format('HH:mm') : null });
                     }}
-                  disabledHours={() => [0,1,2,3,4,5,6,7,18,19,20,21,22,23]}
+                  disabledTime={() => ({
+                    disabledHours: () => [0,1,2,3,4,5,6,7,18,19,20,21,22,23]
+                  })}
                 />
               </Form.Item>
 
-              <Divider>Subpoena Document Editor</Divider>
-
-              <Form.Item name="subpoenaEnabled" valuePropName="checked">
-                <Checkbox>Enable Subpoena Document</Checkbox>
-              </Form.Item>
-
-              {subpoenaEnabled && (
-                <>
-                  <Form.Item label="Template">
-                    <Row gutter={12}>
-                      <Col xs={24} md={10}>
-                        <Select
-                          value={selectedTemplateId}
-                          onChange={setSelectedTemplateId}
-                          options={[
-                            { value: 'default', label: 'Default Template' },
-                            ...subpoenaTemplates.map((template) => ({
-                              value: template.id,
-                              label: template.name
-                            }))
-                          ]}
-                        />
-                      </Col>
-                      <Col>
-                        <Button onClick={applySelectedTemplate}>Apply Template</Button>
-                      </Col>
-                      <Col>
-                        <Button
-                          onClick={() => {
-                            setTemplateModalVisible(true);
-                            openNewTemplateEditor();
-                          }}
-                        >
-                          Manage Templates
-                        </Button>
-                      </Col>
-                    </Row>
-                  </Form.Item>
-
-                  <Form.Item
-                    name="subpoenaSubject"
-                    label="Subpoena Subject"
-                    rules={[{ required: true, message: 'Please enter subpoena subject' }]}
-                  >
-                    <Input placeholder="e.g., Subpoena Notice - Mediation Schedule" />
-                  </Form.Item>
-
-                  <Form.Item
-                    name="subpoenaBody"
-                    label="Subpoena Content"
-                    rules={[{ required: true, message: 'Please enter subpoena content' }]}
-                  >
-                    <TextArea
-                      rows={12}
-                      placeholder="Write the subpoena here"
-                      showCount
-                      maxLength={10000}
-                    />
-                  </Form.Item>
-
-                  <Row gutter={12} style={{ marginBottom: 12 }}>
-                    <Col>
-                      <Button
-                        onClick={() => {
-                          setSelectedTemplateId('default');
-                          applySelectedTemplate();
-                        }}
-                      >
-                        Use Default Template
-                      </Button>
-                    </Col>
-                    <Col>
-                      <Button onClick={handlePrintSubpoena}>
-                        Print Document
-                      </Button>
-                    </Col>
-                  </Row>
-
-                  <Card size="small" style={{ marginBottom: 12, backgroundColor: '#fafafa' }}>
-                    <Text strong>Recipients</Text>
-                    <br />
-                    <Text>Complainant/Plaintiff: {form.getFieldValue('citizenEmail') || 'No email available'}</Text>
-                    <br />
-                    <Text>Defendant: {selectedDefendant?.email || 'No email available'}</Text>
-                  </Card>
-
-                  <Form.Item name="sendSubpoenaEmail" valuePropName="checked">
-                    <Checkbox>Send subpoena by email after submitting this blotter</Checkbox>
-                  </Form.Item>
-                </>
-              )}
+              <Card style={{ textAlign: 'center', backgroundColor: '#f0f2f5' }}>
+                <Text type="secondary">Subpoena generation is available after successful blotter submission.</Text>
+              </Card>
             </>
           )}
 
@@ -1251,59 +1547,32 @@ const ManualComplaint = () => {
               ...form.getFieldsValue(true)
             };
             const selectedTemplate = getSelectedTemplate();
-            const subpoenaAttached = !!values.subpoenaEnabled;
-            const subpoenaWillSend = subpoenaAttached && !!values.sendSubpoenaEmail;
-            const complainantEmail = values.citizenEmail || '';
-            const defendantEmail = selectedDefendant?.email || '';
-            const subjectPreview = values.subpoenaSubject || applyTokens(selectedTemplate?.subject || 'Subpoena Notice - {{case_title}}', values);
-            const bodyPreview = values.subpoenaBody || (selectedTemplateId === 'default'
-              ? buildDefaultSubpoenaBody(values)
-              : applyTokens(selectedTemplate?.body || '', values));
-
-            const checklistItems = [
-              {
-                label: 'Subpoena document attached to blotter',
-                checked: subpoenaAttached,
-                detail: subpoenaAttached ? 'Subpoena editor is enabled.' : 'Subpoena editor is not enabled.'
-              },
-              {
-                label: 'Subpoena content is prepared',
-                checked: subpoenaAttached && !!subjectPreview && !!bodyPreview,
-                detail: subpoenaAttached ? 'Subject and content are ready for review.' : 'Enable subpoena to prepare the document.'
-              },
-              {
-                label: 'Complainant email available',
-                checked: subpoenaAttached ? !!complainantEmail : true,
-                detail: subpoenaAttached ? (complainantEmail || 'No complainant email on file.') : 'Not required when subpoena is disabled.'
-              },
-              {
-                label: 'Defendant email available',
-                checked: subpoenaAttached ? !!defendantEmail : true,
-                detail: subpoenaAttached ? (defendantEmail || 'No defendant email on file.') : 'Not required when subpoena is disabled.'
-              },
-              {
-                label: 'Send subpoena after successful submission',
-                checked: subpoenaWillSend,
-                detail: subpoenaWillSend
-                  ? 'It will be emailed automatically after the blotter saves successfully.'
-                  : 'Email sending is disabled for this blotter.'
-              }
-            ];
 
             return (
               <div>
                 {submissionComplete ? (
-                  <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
+                  <div style={{ padding: '24px 0' }}>
                     <Result
                       status="success"
                       title="Blotter Submitted Successfully"
                       subTitle={`Case ID: ${submittedCaseNumber || 'N/A'}`}
                     />
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+                      <Button
+                        type="primary"
+                        onClick={openSubpoenaGenerationPage}
+                      >
+                        Generate Subpoena
+                      </Button>
+                      <Button onClick={() => { window.location.href = '/'; }}>
+                        Home
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <>
                 <Title level={4}>Review Blotter Details</Title>
-                <Text type="secondary">Review the summary below before submitting. This is what will be saved and, if enabled, emailed.</Text>
+                <Text type="secondary">Review the summary below before submitting. After successful submission, you can generate letters from the next page.</Text>
 
                 <Row gutter={[16, 16]} style={{ marginTop: 20 }}>
                   <Col xs={24} md={12}>
@@ -1335,35 +1604,7 @@ const ManualComplaint = () => {
                     </Card>
                   </Col>
 
-                  <Col xs={24} md={12}>
-                    <Card size="small" title="Subpoena Summary">
-                      <p>
-                        <Text strong>Status:</Text>{' '}
-                        {subpoenaAttached ? <Tag color="green">Attached</Tag> : <Tag color="default">Not Attached</Tag>}
-                      </p>
-                      <p><Text strong>Template:</Text> {selectedTemplate?.name || 'Default Template'}</p>
-                      <p><Text strong>Subject:</Text> {subjectPreview || 'N/A'}</p>
-                      <p><Text strong>Will email after submit:</Text>{' '}
-                        {subpoenaWillSend ? <Tag color="blue">Yes</Tag> : <Tag color="default">No</Tag>}
-                      </p>
-                    </Card>
-                  </Col>
                 </Row>
-
-                <Card size="small" title="Subpoena Checklist" style={{ marginTop: 16 }}>
-                  {checklistItems.map((item) => (
-                    <div key={item.label} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
-                      <Tag color={item.checked ? 'green' : 'red'} style={{ minWidth: 76, textAlign: 'center' }}>
-                        {item.checked ? 'Ready' : 'Missing'}
-                      </Tag>
-                      <div>
-                        <Text strong>{item.label}</Text>
-                        <br />
-                        <Text type="secondary">{item.detail}</Text>
-                      </div>
-                    </div>
-                  ))}
-                </Card>
 
                 {fileList.length > 0 && (
                   <Card size="small" title="Attachments Preview" style={{ marginTop: 16 }}>
@@ -1409,29 +1650,147 @@ const ManualComplaint = () => {
                   </Card>
                 )}
 
-                {subpoenaAttached && (
-                  <Card size="small" title="Subpoena Preview" style={{ marginTop: 16, textAlign: 'left' }}>
-                    <Text strong>Subject</Text>
-                    <br />
-                    <Text>{subjectPreview || 'N/A'}</Text>
-                    <Divider style={{ margin: '12px 0' }} />
-                    <Text strong>Content</Text>
-                    <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, marginBottom: 0 }}>{bodyPreview || 'N/A'}</pre>
-                  </Card>
-                )}
 
-                <div style={{ marginTop: 20, textAlign: 'center' }}>
-                  <Button
-                    type="primary"
-                    size="large"
-                    onClick={() => form.submit()}
-                    loading={loading}
-                  >
-                    Submit Blotter
-                  </Button>
-                </div>
                   </>
                 )}
+              </div>
+            );
+          }}
+        </Form.Item>
+      ),
+    },
+    {
+      title: 'Letter Generation',
+      content: (
+        <Form.Item noStyle shouldUpdate>
+          {() => {
+            const generationValues = getSubmittedGenerationValues();
+            const currentSubject = form.getFieldValue('subpoenaSubject') || '';
+            const currentBody = form.getFieldValue('subpoenaBody') || '';
+
+            const applyTemplateForGeneration = () => {
+              const selectedTemplate = getSelectedTemplate();
+              const subject = applyTokens(selectedTemplate?.subject || 'Subpoena Notice - {{caseNumber}}', generationValues, selectedTemplate);
+              const body = selectedTemplateId === 'default'
+                ? buildDefaultSubpoenaBody(generationValues)
+                : applyTokens(selectedTemplate?.body || '', generationValues, selectedTemplate);
+
+              form.setFieldsValue({
+                subpoenaSubject: subject,
+                subpoenaBody: body
+              });
+
+              message.success(`Template applied: ${selectedTemplate?.name || 'Default Template'}`);
+            };
+
+            return (
+              <div>
+                <Title level={4}>Generate Letter to Defendant</Title>
+                <Text type="secondary">Choose a template, edit the content if needed, then print or send the generated subpoena letter.</Text>
+
+                <Card size="small" style={{ marginTop: 16, marginBottom: 16 }}>
+                  <Row gutter={16}>
+                    <Col xs={24} md={8}>
+                      <Text strong>Case Number:</Text>
+                      <br />
+                      <Tag color="blue">{submittedCaseNumber || 'N/A'}</Tag>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Text strong>Complainant:</Text>
+                      <br />
+                      <Text>{generationValues.citizenName || 'N/A'}</Text>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Text strong>Defendant:</Text>
+                      <br />
+                      <Text>{submittedDefendantName || 'N/A'}</Text>
+                      <br />
+                      <Text type="secondary">{submittedDefendantEmail || 'No email available'}</Text>
+                    </Col>
+                  </Row>
+                </Card>
+
+                <Form.Item label="Template">
+                  <Row gutter={12}>
+                    <Col xs={24} md={10}>
+                      <Select
+                        value={selectedTemplateId}
+                        onChange={applyTemplateAndPersist}
+                        options={[
+                          { value: 'default', label: 'Default Template' },
+                          ...subpoenaTemplates.map((template) => ({
+                            value: template.id,
+                            label: template.name
+                          }))
+                        ]}
+                      />
+                    </Col>
+                    <Col>
+                      <Button onClick={() => loadTemplateIntoEditor(selectedTemplateId)}>Load Template</Button>
+                    </Col>
+                    <Col>
+                      <Button
+                        onClick={() => {
+                          setTemplateModalVisible(true);
+                          openNewTemplateEditor();
+                        }}
+                      >
+                        Manage Templates
+                      </Button>
+                    </Col>
+                  </Row>
+                </Form.Item>
+
+                <Form.Item
+                  name="subpoenaSubject"
+                  label="Letter Subject"
+                  rules={[{ required: true, message: 'Please enter letter subject' }]}
+                >
+                  <Input placeholder="Subpoena Notice - Case" />
+                </Form.Item>
+
+                <Form.Item
+                  label="Letter Content"
+                >
+                  <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, overflow: 'hidden' }}>
+                    <div style={{ borderBottom: '1px solid #d9d9d9', background: '#fafafa' }}>
+                      <ReactQuill
+                        ref={generationEditorRef}
+                        theme="snow"
+                        value={currentBody}
+                        onChange={(content) => {
+                          form.setFieldsValue({ subpoenaBody: content });
+                          persistDraft({ subpoenaBody: content });
+                        }}
+                        modules={generationEditorModules}
+                        formats={RICH_TEXT_FORMATS}
+                        style={{ minHeight: 280, background: '#fff' }}
+                      />
+                    </div>
+                  </div>
+                </Form.Item>
+
+                <Row gutter={12} style={{ marginBottom: 16 }}>
+                  <Col>
+                    <Button type="primary" onClick={handlePrintSubpoena} disabled={!currentSubject || !currentBody}>
+                      Print Letter
+                    </Button>
+                  </Col>
+                  <Col>
+                    <Button
+                      onClick={handleSendSubpoenaEmail}
+                      loading={sendingSubpoenaEmail}
+                      disabled={!submittedDefendantEmail}
+                    >
+                      Send to Defendant Email
+                    </Button>
+                  </Col>
+                  <Col>
+                    <Button onClick={() => { window.location.href = '/'; }}>
+                      Home
+                    </Button>
+                  </Col>
+                </Row>
               </div>
             );
           }}
@@ -1445,6 +1804,7 @@ const ManualComplaint = () => {
     ['title', 'category', 'priority', 'description'],
     ['location', 'incidentDate'],
     ['mediationRequired'],
+    [],
     [],
   ];
 
@@ -1495,6 +1855,19 @@ const ManualComplaint = () => {
             </Title>
           </div>
         }
+        extra={
+          <Popconfirm
+            title="Clear all filled fields?"
+            description="This will remove the current form entries, selected attachments, and saved draft for this manual blotter."
+            okText="Yes, clear"
+            cancelText="Cancel"
+            onConfirm={handleClearFilledFields}
+          >
+            <Button danger>
+              Clear Fields
+            </Button>
+          </Popconfirm>
+        }
         className="manual-complaint-card"
       >
         <Steps
@@ -1507,6 +1880,7 @@ const ManualComplaint = () => {
           <Step title="Evidence" icon={<UploadOutlined />} />
           <Step title="Mediation" icon={<TeamOutlined />} />
           <Step title="Review" icon={<EnvironmentOutlined />} />
+          {submissionComplete && <Step title="Letter Generation" icon={<FileTextOutlined />} />}
         </Steps>
 
         <Form
@@ -1521,34 +1895,26 @@ const ManualComplaint = () => {
           {currentStep === 2 && steps[2].content}
           {currentStep === 3 && steps[3].content}
           {currentStep === 4 && steps[4].content}
+          {currentStep === 5 && steps[5].content}
 
           <Row justify="space-between" style={{ marginTop: 24 }}>
             <Col>
-              {currentStep > 0 && (
-                <Button
-                  onClick={() => {
-                    if (submissionComplete) {
-                      setSubmissionComplete(false);
-                      return;
-                    }
-
-                    handlePrev();
-                  }}
-                >
+              {!submissionComplete && currentStep > 0 && (
+                <Button onClick={handlePrev} style={{ marginRight: 8 }}>
                   Previous
                 </Button>
               )}
             </Col>
             <Col>
-              {!submissionComplete && (currentStep < steps.length - 1 ? (
-                <Button type="primary" onClick={handleNext}>
-                  Next
-                </Button>
-              ) : (
+              {!submissionComplete && (currentStep === 4 ? (
                 <Button type="primary" loading={loading} onClick={() => form.submit()}>
                   Submit Blotter
                 </Button>
-              ))}
+              ) : currentStep < 4 ? (
+                <Button type="primary" onClick={handleNext}>
+                  Next
+                </Button>
+              ) : null)}
             </Col>
           </Row>
         </Form>
@@ -1723,7 +2089,20 @@ const ManualComplaint = () => {
                   label="Body Template"
                   rules={[{ required: true, message: 'Please enter a body template' }]}
                 >
-                  <TextArea rows={11} placeholder="Use placeholders like {{complainant_name}}" />
+                  <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, overflow: 'hidden' }}>
+                    <ReactQuill
+                      ref={templateEditorRef}
+                      theme="snow"
+                      value={templateForm.getFieldValue('body') || ''}
+                      onChange={(content) => {
+                        templateForm.setFieldsValue({ body: content });
+                      }}
+                      modules={templateEditorModules}
+                      formats={RICH_TEXT_FORMATS}
+                      placeholder="Use placeholders like {{complainant_name}}"
+                      style={{ minHeight: 240, background: '#fff' }}
+                    />
+                  </div>
                 </Form.Item>
 
                 <Form.Item label="Barangay Logo (Optional)">
@@ -1765,18 +2144,24 @@ const ManualComplaint = () => {
                       <Button
                         size="small"
                         onClick={() => {
-                          setSelectedTemplateId(template.id);
-                          const values = form.getFieldsValue(true);
-                          form.setFieldsValue({
-                            subpoenaSubject: applyTokens(template.subject || '', values),
-                            subpoenaBody: applyTokens(template.body || '', values)
-                          });
-                          message.success(`Template applied: ${template.name}`);
+                          applyTemplateAndPersist(template.id);
                         }}
                       >
                         Apply
                       </Button>
-                      <Button size="small" danger onClick={() => deleteTemplate(template.id)}>Delete</Button>
+                      <Button 
+                        size="small" 
+                        danger 
+                        onClick={() => {
+                          if (selectedTemplateId === template.id) {
+                            setSelectedTemplateId('default');
+                            persistDraft({ selectedTemplateId: 'default' });
+                          }
+                          deleteTemplate(template.id);
+                        }}
+                      >
+                        Delete
+                      </Button>
                     </div>
                   </Card>
                 ))

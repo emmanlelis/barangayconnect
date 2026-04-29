@@ -37,10 +37,21 @@ const UserManagement = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [userSection, setUserSection] = useState('active');
+  const [searchText, setSearchText] = useState('');
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 20,
+    total: 0,
+  });
   const [selectedUser, setSelectedUser] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [viewModalVisible, setViewModalVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [resetPasswordModalVisible, setResetPasswordModalVisible] = useState(false);
+  const [hardDeleteModalVisible, setHardDeleteModalVisible] = useState(false);
+  const [hardDeletePassword, setHardDeletePassword] = useState('');
+  const [hardDeleting, setHardDeleting] = useState(false);
+  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [profilePictureUrl, setProfilePictureUrl] = useState('');
   const [editProfilePictureUrl, setEditProfilePictureUrl] = useState('');
@@ -49,23 +60,51 @@ const UserManagement = () => {
   const [cameraTarget, setCameraTarget] = useState('create');
   const [form] = Form.useForm();
   const [createForm] = Form.useForm();
+  const [resetPasswordForm] = Form.useForm();
   const [stats, setStats] = useState({});
   const cameraVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
 
   useEffect(() => {
-    loadUsers();
+    loadUsers({ page: 1 });
     loadStats();
   }, [userSection]);
 
-  const loadUsers = async () => {
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      const normalizedSearch = searchText.trim();
+      loadUsers({ page: 1, search: normalizedSearch });
+    }, 350);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchText]);
+
+  const loadUsers = async (options = {}) => {
     try {
       setLoading(true);
+      const page = options.page ?? pagination.current;
+      const pageSize = options.pageSize ?? pagination.pageSize;
+      const search = options.search ?? searchText;
+      const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+
       const response = await adminAPI.getUsers({
+        page,
+        limit: pageSize,
+        search: normalizedSearch || undefined,
         filterType: userSection === 'recently-deleted' ? 'recently-deleted' : 'active'
       });
+
       if (response.data.success) {
-        setUsers(response.data.data.users);
+        const usersData = response.data.data.users || [];
+        const serverPagination = response.data.data.pagination || {};
+
+        setUsers(usersData);
+        setPagination((prev) => ({
+          ...prev,
+          current: serverPagination.current || page,
+          pageSize,
+          total: serverPagination.count || usersData.length,
+        }));
       }
     } catch (error) {
       message.error('Failed to load users');
@@ -316,6 +355,39 @@ const UserManagement = () => {
     }
   };
 
+  const handleOpenResetPassword = (user) => {
+    setSelectedUser(user);
+    resetPasswordForm.resetFields();
+    setResetPasswordModalVisible(true);
+  };
+
+  const handleResetPassword = async (values) => {
+    if (!selectedUser?._id) {
+      message.error('No user selected');
+      return;
+    }
+
+    try {
+      setResetPasswordLoading(true);
+      const response = await adminAPI.resetUserPassword(selectedUser._id, {
+        password: values.password,
+        otp: values.otp
+      });
+
+      if (response.data.success) {
+        message.success('Password reset successfully');
+        setResetPasswordModalVisible(false);
+        resetPasswordForm.resetFields();
+      } else {
+        message.error(response.data.message || 'Failed to reset password');
+      }
+    } catch (error) {
+      message.error(error.response?.data?.message || 'Failed to reset password');
+    } finally {
+      setResetPasswordLoading(false);
+    }
+  };
+
   const columns = [
     {
       title: 'Profile',
@@ -407,6 +479,13 @@ const UserManagement = () => {
                 {record.isActive ? 'Deactivate' : 'Activate'}
               </Button>
               <Button
+                type="default"
+                size="small"
+                onClick={() => handleOpenResetPassword(record)}
+              >
+                Reset Password
+              </Button>
+              <Button
                 type="link"
                 danger
                 size="small"
@@ -425,6 +504,17 @@ const UserManagement = () => {
                 onClick={() => handleRecoverUser(record._id)}
               >
                 Recover
+              </Button>
+              <Button
+                type="danger"
+                size="small"
+                onClick={() => {
+                  setSelectedUser(record);
+                  setHardDeletePassword('');
+                  setHardDeleteModalVisible(true);
+                }}
+              >
+                Permanently Delete
               </Button>
               <Tag color="orange">Auto delete after 30 days</Tag>
             </>
@@ -510,16 +600,38 @@ const UserManagement = () => {
         <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
           <Button
             type={userSection === 'active' ? 'primary' : 'default'}
-            onClick={() => setUserSection('active')}
+            onClick={() => {
+              setUserSection('active');
+              setSearchText('');
+              setPagination((prev) => ({ ...prev, current: 1 }));
+            }}
           >
             Active Users
           </Button>
           <Button
             type={userSection === 'recently-deleted' ? 'primary' : 'default'}
-            onClick={() => setUserSection('recently-deleted')}
+            onClick={() => {
+              setUserSection('recently-deleted');
+              setSearchText('');
+              setPagination((prev) => ({ ...prev, current: 1 }));
+            }}
           >
             Recently Deleted Users
           </Button>
+        </div>
+
+        <div style={{ marginBottom: 16, maxWidth: 420 }}>
+          <Input.Search
+            allowClear
+            placeholder="Search name, email, or phone"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            onSearch={(value) => {
+              const normalizedSearch = value.trim();
+              setSearchText(normalizedSearch);
+              loadUsers({ page: 1, search: normalizedSearch });
+            }}
+          />
         </div>
 
         {userSection === 'recently-deleted' && (
@@ -534,9 +646,14 @@ const UserManagement = () => {
           rowKey="_id"
           loading={loading}
           pagination={{
-            pageSize: 10,
+            current: pagination.current,
+            pageSize: pagination.pageSize,
+            total: pagination.total,
             showSizeChanger: true,
             showQuickJumper: true,
+            onChange: (page, pageSize) => {
+              loadUsers({ page, pageSize });
+            },
           }}
         />
       </Card>
@@ -696,6 +813,117 @@ const UserManagement = () => {
             </Col>
           </Row>
         </Form>
+      </Modal>
+
+      <Modal
+        title="Reset User Password"
+        open={resetPasswordModalVisible}
+        onCancel={() => {
+          setResetPasswordModalVisible(false);
+          resetPasswordForm.resetFields();
+          setSelectedUser(null);
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setResetPasswordModalVisible(false);
+            resetPasswordForm.resetFields();
+            setSelectedUser(null);
+          }}>
+            Cancel
+          </Button>,
+          <Button key="submit" type="primary" loading={resetPasswordLoading} onClick={() => resetPasswordForm.submit()}>
+            Reset Password
+          </Button>
+        ]}
+      >
+        <p style={{ marginBottom: 12 }}>
+          Reset password for <strong>{selectedUser?.email || 'selected user'}</strong>.
+        </p>
+        <Form
+          form={resetPasswordForm}
+          layout="vertical"
+          onFinish={handleResetPassword}
+        >
+          <Form.Item
+            name="password"
+            label="New Password"
+            rules={[
+              { required: true, message: 'Please enter a new password' },
+              { min: 6, message: 'Password must be at least 6 characters' }
+            ]}
+          >
+            <Input.Password placeholder="Enter new password" />
+          </Form.Item>
+
+          <Form.Item
+            name="confirmPassword"
+            label="Confirm New Password"
+            dependencies={['password']}
+            rules={[
+              { required: true, message: 'Please confirm the new password' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('password') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Passwords do not match'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="Confirm new password" />
+          </Form.Item>
+
+          <Form.Item
+            name="otp"
+            label="Authenticator Code"
+            rules={[
+              { required: true, message: 'Please enter your authenticator code' },
+              { pattern: /^\d{6}$/, message: 'Code must be 6 digits' }
+            ]}
+          >
+            <Input placeholder="Enter 6-digit code" maxLength={6} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Permanently Delete User"
+        open={hardDeleteModalVisible}
+        onCancel={() => {
+          setHardDeleteModalVisible(false);
+          setSelectedUser(null);
+          setHardDeletePassword('');
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => { setHardDeleteModalVisible(false); setSelectedUser(null); setHardDeletePassword(''); }}>Cancel</Button>,
+          <Button key="delete" type="primary" danger loading={hardDeleting} onClick={async () => {
+            if (!hardDeletePassword) { message.error('Please enter your admin password'); return; }
+            try {
+              setHardDeleting(true);
+              const response = await adminAPI.hardDeleteUser(selectedUser._id, { password: hardDeletePassword });
+              if (response.data.success) {
+                message.success('User permanently deleted');
+                setHardDeleteModalVisible(false);
+                setSelectedUser(null);
+                setHardDeletePassword('');
+                loadUsers();
+                loadStats();
+              } else {
+                message.error(response.data.message || 'Failed to permanently delete user');
+              }
+            } catch (error) {
+              message.error(error.response?.data?.message || error.message || 'Failed to permanently delete user');
+            } finally {
+              setHardDeleting(false);
+            }
+          }}>Permanently Delete</Button>
+        ]}
+      >
+        <div>
+          <p>Type your admin password to confirm permanent deletion of <strong>{selectedUser?.email}</strong>. This action cannot be undone.</p>
+          <Input.Password value={hardDeletePassword} onChange={(e) => setHardDeletePassword(e.target.value)} placeholder="Admin password" />
+        </div>
       </Modal>
 
       <Modal

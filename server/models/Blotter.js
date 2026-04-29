@@ -13,6 +13,10 @@ const blotterSchema = new mongoose.Schema({
     required: [true, 'Complainant name is required'],
     trim: true
   },
+  complainantUser: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   respondent: {
     type: String,
     required: [true, 'Respondent name is required'],
@@ -27,6 +31,25 @@ const blotterSchema = new mongoose.Schema({
   location: {
     type: String,
     trim: true
+  },
+  isFilingComplaintAgainstSomeone: {
+    type: Boolean,
+    default: false
+  },
+  respondentName: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  respondentRelationship: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  respondentAddress: {
+    type: String,
+    trim: true,
+    default: ''
   },
   status: {
     type: String,
@@ -49,14 +72,33 @@ const blotterSchema = new mongoose.Schema({
     enum: ['regular', 'lupon'],
     default: 'regular'
   },
+  isAnonymous: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  priority: {
+    type: String,
+    enum: ['Low', 'Medium', 'High', 'Urgent'],
+    default: 'Medium',
+    index: true
+  },
   mediationCount: {
     type: Number,
     default: 0,
     min: 0,
     max: 3
   },
+  sourceComplaint: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Complaint'
+  },
   dateOfMeeting: {
     type: Date
+  },
+  mediationTime: {
+    type: String,
+    trim: true
   },
   resolution: {
     type: String,
@@ -73,7 +115,7 @@ const blotterSchema = new mongoose.Schema({
       url: String,
       resourceType: {
         type: String,
-        enum: ['image', 'video'],
+        enum: ['image', 'video', 'document'],
         default: 'image'
       },
       format: String,
@@ -84,6 +126,31 @@ const blotterSchema = new mongoose.Schema({
       }
     }
   ],
+  generatedDocuments: [
+    {
+      filename: String,
+      url: String,
+      resourceType: {
+        type: String,
+        enum: ['document'],
+        default: 'document'
+      },
+      documentType: String,
+      subject: String,
+      body: String,
+      sentTo: [String],
+      format: String,
+      size: Number,
+      uploadedAt: {
+        type: Date,
+        default: Date.now
+      }
+    }
+  ],
+  defendantUser: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Admin'
@@ -124,7 +191,7 @@ const blotterSchema = new mongoose.Schema({
     body: {
       type: String,
       trim: true,
-      maxlength: [10000, 'Subpoena body cannot exceed 10000 characters']
+      maxlength: [50000, 'Subpoena body cannot exceed 50000 characters']
     },
     complainantEmail: {
       type: String,

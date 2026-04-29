@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "BarangayConnect",
+    "slug": "barangayconnect",
+    "version": "1.0.0",
+    "icon": "./assets/Barangay Connect app icon.png",
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/Barangay Connect app icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.emman.lelis.barangayconnect"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

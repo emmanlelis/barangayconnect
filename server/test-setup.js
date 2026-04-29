@@ -73,6 +73,11 @@ async function testAdminCreation() {
     // Check if test admin already exists
     const existingAdmin = await Admin.findOne({ email: 'admin@barangayconnect.com' });
     if (existingAdmin) {
+      if (existingAdmin.position !== 'Barangay Secretary') {
+        existingAdmin.position = 'Barangay Secretary';
+        await existingAdmin.save();
+        console.log('✅ Existing test admin position updated to Barangay Secretary');
+      }
       console.log('✅ Test admin already exists');
       testResults.adminCreation = true;
       return true;
@@ -85,7 +90,7 @@ async function testAdminCreation() {
       email: 'admin@barangayconnect.com',
       password: 'admin123',
       phoneNumber: '09987654321',
-      position: 'Barangay Captain',
+      position: 'Barangay Secretary',
       barangay: 'Test Barangay',
       department: 'General Administration',
       permissions: ['view_complaints', 'manage_complaints', 'admin_panel'],

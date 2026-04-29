@@ -66,6 +66,20 @@ export const AuthProvider = ({ children }) => {
       const response = await api.post('/auth/login', credentials);
       
       console.log('Login response:', response.data);
+
+      if (response.data?.data?.requiresOtp) {
+        return {
+          success: false,
+          requiresOtp: true,
+          setupRequired: !!response.data?.data?.setupRequired,
+          verificationId: response.data?.data?.verificationId,
+          setupKey: response.data?.data?.setupKey,
+          otpAuthUrl: response.data?.data?.otpAuthUrl,
+          accountLabel: response.data?.data?.accountLabel,
+          issuer: response.data?.data?.issuer,
+          message: response.data?.message || 'Authenticator code is required'
+        };
+      }
       
       if (response.data.success && response.data.data.isAdmin) {
         const { token, admin } = response.data.data;
@@ -89,6 +103,20 @@ export const AuthProvider = ({ children }) => {
       console.error('Error response:', error.response);
       console.error('Error status:', error.response?.status);
       console.error('Error data:', error.response?.data);
+
+      if (error.response?.data?.data?.requiresOtp) {
+        return {
+          success: false,
+          requiresOtp: true,
+          setupRequired: !!error.response?.data?.data?.setupRequired,
+          verificationId: error.response?.data?.data?.verificationId,
+          setupKey: error.response?.data?.data?.setupKey,
+          otpAuthUrl: error.response?.data?.data?.otpAuthUrl,
+          accountLabel: error.response?.data?.data?.accountLabel,
+          issuer: error.response?.data?.data?.issuer,
+          message: error.response?.data?.message || 'Authenticator code is required'
+        };
+      }
       
       const errorMessage = error.response?.data?.message || error.message || 'Login failed';
       console.error('Login error:', errorMessage);

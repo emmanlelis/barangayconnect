@@ -7,6 +7,8 @@ import {
   StyleSheet,
   RefreshControl,
   Alert,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { adminAPI } from '../../services/api';
@@ -113,9 +115,9 @@ const AdminDashboardScreen = ({ navigation }) => {
         <DashboardTile
           title="Total"
           count={stats.totalComplaints || 0}
-          subtitle="All complaints"
+          subtitle="All blotters"
           color="#007AFF"
-          onPress={() => navigation.navigate('AdminComplaints', { status: null })}
+          onPress={() => navigation.navigate('AdminBlotters', { status: null })}
         />
         
         <DashboardTile
@@ -123,7 +125,7 @@ const AdminDashboardScreen = ({ navigation }) => {
           count={stats.pendingComplaints || 0}
           subtitle="Need attention"
           color="#FF9500"
-          onPress={() => navigation.navigate('AdminComplaints', { status: 'Pending' })}
+          onPress={() => navigation.navigate('AdminBlotters', { status: 'Pending' })}
         />
         
         <DashboardTile
@@ -131,7 +133,7 @@ const AdminDashboardScreen = ({ navigation }) => {
           count={stats.inProgressComplaints || 0}
           subtitle="Being handled"
           color="#34C759"
-          onPress={() => navigation.navigate('AdminComplaints', { status: 'In Progress' })}
+          onPress={() => navigation.navigate('AdminBlotters', { status: 'In Progress' })}
         />
         
         <DashboardTile
@@ -139,22 +141,22 @@ const AdminDashboardScreen = ({ navigation }) => {
           count={stats.resolvedComplaints || 0}
           subtitle="Completed"
           color="#5856D6"
-          onPress={() => navigation.navigate('AdminComplaints', { status: 'Resolved' })}
+          onPress={() => navigation.navigate('AdminBlotters', { status: 'Resolved' })}
         />
       </View>
 
       <View style={styles.sectionContainer}>
-        <Text style={styles.sectionTitle}>Recent Complaints</Text>
+        <Text style={styles.sectionTitle}>Recent Blotters</Text>
         {recentComplaints.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No recent complaints</Text>
+            <Text style={styles.emptyText}>No recent blotters</Text>
           </View>
         ) : (
           recentComplaints.slice(0, 5).map((complaint) => (
             <TouchableOpacity
               key={complaint._id}
               style={styles.recentComplaintCard}
-              onPress={() => navigation.navigate('AdminComplaintDetail', { id: complaint._id })}
+              onPress={() => navigation.navigate('AdminBlotterDetail', { id: complaint._id })}
             >
               <View style={styles.recentComplaintHeader}>
                 <Text style={styles.recentComplaintTitle} numberOfLines={1}>
@@ -180,9 +182,9 @@ const AdminDashboardScreen = ({ navigation }) => {
         {recentComplaints.length > 0 && (
           <TouchableOpacity
             style={styles.viewAllButton}
-            onPress={() => navigation.navigate('AdminComplaints')}
+            onPress={() => navigation.navigate('AdminBlotters')}
           >
-            <Text style={styles.viewAllText}>View All Complaints</Text>
+            <Text style={styles.viewAllText}>View All Blotters</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -192,10 +194,10 @@ const AdminDashboardScreen = ({ navigation }) => {
         
         <TouchableOpacity
           style={styles.actionButton}
-          onPress={() => navigation.navigate('AdminComplaints')}
+          onPress={() => navigation.navigate('AdminBlotters')}
         >
           <Text style={styles.actionButtonIcon}>📋</Text>
-          <Text style={styles.actionButtonText}>Manage All Complaints</Text>
+          <Text style={styles.actionButtonText}>Manage All Blotters</Text>
         </TouchableOpacity>
         
         <TouchableOpacity
@@ -247,6 +249,7 @@ const styles = StyleSheet.create({
   header: {
     padding: 20,
     paddingBottom: 10,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 14 : 20,
   },
   headerTop: {
     flexDirection: 'row',

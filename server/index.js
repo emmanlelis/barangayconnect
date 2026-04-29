@@ -8,14 +8,36 @@ const connectDB = require('./config/database');
 // Load environment variables
 dotenv.config();
 
+const parseCorsOrigins = (value) => {
+  if (!value) {
+    return [];
+  }
+
+  return String(value)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+};
+
+// Initialize Cloudinary (must be before routes that use it)
+require('./middleware/upload');
+
 // Connect to database
 connectDB();
 
 const app = express();
 
 // CORS configuration (must be first)
+const defaultCorsOrigins = ['http://localhost:3000', 'http://localhost:3001', 'exp://192.168.1.100:8081'];
+const configuredCorsOrigins = [
+  ...parseCorsOrigins(process.env.CORS_ORIGINS),
+  ...parseCorsOrigins(process.env.WEB_APP_ORIGIN),
+  ...parseCorsOrigins(process.env.MOBILE_APP_ORIGIN),
+];
+const corsOrigins = configuredCorsOrigins.length > 0 ? configuredCorsOrigins : defaultCorsOrigins;
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'exp://192.168.1.100:8081'], // Add your frontend URLs
+  origin: corsOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -48,7 +70,9 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/complaints', require('./routes/complaints'));
 app.use('/api/blotters', require('./routes/blotters'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/admin/documents', require('./routes/admin-documents'));
 app.use('/api/upload', require('./routes/upload'));
 
 // Health check endpoint

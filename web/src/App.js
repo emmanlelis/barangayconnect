@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Layout, Menu, Typography, App as AntApp, Button } from 'antd';
-import { DashboardOutlined, FileTextOutlined, UserOutlined, BarChartOutlined, BellOutlined } from '@ant-design/icons';
+import { DashboardOutlined, FileTextOutlined, UserOutlined, BellOutlined, MailOutlined, CalendarOutlined } from '@ant-design/icons';
 import { useAuth } from './contexts/AuthContext';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
-import Analytics from './components/Analytics';
 import Notifications from './components/Notifications';
 import UserManagement from './components/UserManagement';
 import ManualComplaint from './components/ManualComplaint';
 import BlotterManagement from './components/BlotterManagement';
+import Documents from './components/Documents';
+import MailSettings from './components/MailSettings';
+import CalendarSchedule from './components/CalendarSchedule';
+import AdminUserManagement from './components/AdminUserManagement';
 
 const { Content, Sider } = Layout;
 const { Title } = Typography;
@@ -59,10 +62,12 @@ function App() {
           theme="dark"
           style={{ height: '100%', borderRight: 0 }}
         >
-          <div style={{ padding: '16px' }}>
-            <Title level={4} style={{ color: 'white', textAlign: 'center' }}>
-              BarangayConnect Admin
-            </Title>
+          <div style={{ padding: '18px 16px 14px', display: 'flex', justifyContent: 'center' }}>
+            <img
+              src="/barangayconnect-logo.png"
+              alt="BarangayConnect"
+              style={{ width: '100%', maxWidth: 170, height: 'auto', display: 'block' }}
+            />
           </div>
           <Menu
             theme="dark"
@@ -93,6 +98,10 @@ function App() {
                   {
                     key: '/blotters/new',
                     label: 'New App Blotters',
+                  },
+                  {
+                    key: '/blotters/anonymous',
+                    label: 'Anonymous Blotters',
                   },
                   {
                     key: '/blotters/ongoing',
@@ -150,14 +159,24 @@ function App() {
                 label: 'User Management',
               },
               {
-                key: '/analytics',
-                icon: <BarChartOutlined />,
-                label: 'Analytics',
+                key: '/calendar-schedule',
+                icon: <CalendarOutlined />,
+                label: 'Calendar Schedule',
               },
               {
-                key: '/notifications',
-                icon: <BellOutlined />,
-                label: 'Notifications',
+                key: '/documents',
+                icon: <FileTextOutlined />,
+                label: 'Documents',
+              },
+              {
+                key: '/mail-settings',
+                icon: <MailOutlined />,
+                label: 'Mail Settings',
+              },
+              {
+                key: '/admin-user-management',
+                icon: <UserOutlined />,
+                label: 'Admin User Management',
               },
             ]}
             onClick={({ key }) => {
@@ -171,6 +190,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/blotters" element={<BlotterManagement filterType="all" />} />
             <Route path="/blotters/new" element={<BlotterManagement filterType="new" />} />
+            <Route path="/blotters/anonymous" element={<BlotterManagement filterType="anonymous" />} />
             <Route path="/blotters/ongoing" element={<BlotterManagement filterType="ongoing" />} />
             <Route path="/blotters/ongoing/new" element={<BlotterManagement filterType="ongoing-new" />} />
             <Route path="/blotters/ongoing/no-mediation" element={<BlotterManagement filterType="ongoing-no-mediation" />} />
@@ -184,8 +204,10 @@ function App() {
             <Route path="/blotters/recently-deleted" element={<BlotterManagement filterType="recently-deleted" />} />
             <Route path="/user-management" element={<UserManagement />} />
             <Route path="/manual-blotter" element={<ManualComplaint />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/notifications" element={<Notifications />} />
+            <Route path="/calendar-schedule" element={<CalendarSchedule />} />
+            <Route path="/documents" element={<Documents />} />
+            <Route path="/mail-settings" element={<MailSettings />} />
+            <Route path="/admin-user-management" element={<AdminUserManagement />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>

@@ -58,6 +58,11 @@ const userSchema = new mongoose.Schema({
     default: false
   },
   verificationToken: String,
+  authenticatorSecret: {
+    type: String,
+    select: false,
+    default: null
+  },
   resetPasswordToken: String,
   resetPasswordExpire: Date,
   lastLogin: Date,
@@ -76,7 +81,40 @@ const userSchema = new mongoose.Schema({
   deletedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Admin'
-  }
+  },
+  accountChanges: [{
+    action: {
+      type: String,
+      default: 'profile_updated'
+    },
+    source: {
+      type: String,
+      enum: ['mobile', 'web-admin', 'system'],
+      default: 'mobile'
+    },
+    actorType: {
+      type: String,
+      enum: ['user', 'admin', 'system'],
+      default: 'user'
+    },
+    actorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null
+    },
+    changedFields: [{
+      type: String
+    }],
+    changes: [{
+      field: String,
+      label: String,
+      before: mongoose.Schema.Types.Mixed,
+      after: mongoose.Schema.Types.Mixed
+    }],
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }]
 }, {
   timestamps: true
 });

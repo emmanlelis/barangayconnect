@@ -8,10 +8,12 @@ import {
   Alert,
   TextInput,
   Modal,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import { complaintAPI, adminAPI } from '../../services/api';
 
-const AdminComplaintDetailScreen = ({ navigation, route }) => {
+const AdminBlotterDetailScreen = ({ navigation, route }) => {
   const [complaint, setComplaint] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
@@ -32,12 +34,12 @@ const AdminComplaintDetailScreen = ({ navigation, route }) => {
       if (response.success) {
         setComplaint(response.data.complaint);
       } else {
-        Alert.alert('Error', response.message || 'Failed to load complaint details');
+        Alert.alert('Error', response.message || 'Failed to load blotter details');
         navigation.goBack();
       }
     } catch (error) {
-      console.error('Load complaint detail error:', error);
-      Alert.alert('Error', 'Failed to load complaint details');
+      console.error('Load blotter detail error:', error);
+      Alert.alert('Error', 'Failed to load blotter details');
       navigation.goBack();
     } finally {
       setIsLoading(false);
@@ -97,7 +99,7 @@ const AdminComplaintDetailScreen = ({ navigation, route }) => {
         }));
         setShowStatusModal(false);
         setSelectedStatus('');
-        Alert.alert('Success', 'Complaint status updated successfully');
+        Alert.alert('Success', 'Blotter status updated successfully');
       } else {
         Alert.alert('Error', response.message || 'Failed to update status');
       }
@@ -191,7 +193,7 @@ const AdminComplaintDetailScreen = ({ navigation, route }) => {
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Loading complaint details...</Text>
+        <Text style={styles.loadingText}>Loading blotter details...</Text>
       </View>
     );
   }
@@ -199,7 +201,7 @@ const AdminComplaintDetailScreen = ({ navigation, route }) => {
   if (!complaint) {
     return (
       <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>Failed to load complaint</Text>
+        <Text style={styles.errorText}>Failed to load blotter</Text>
       </View>
     );
   }
@@ -211,7 +213,7 @@ const AdminComplaintDetailScreen = ({ navigation, route }) => {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Complaint Details</Text>
+          <Text style={styles.title}>Blotter Details</Text>
         </View>
 
         <View style={styles.complaintInfo}>
@@ -450,6 +452,7 @@ const styles = StyleSheet.create({
   header: {
     padding: 20,
     paddingBottom: 10,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 14 : 20,
   },
   backButton: {
     marginBottom: 10,
@@ -800,4 +803,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default AdminComplaintDetailScreen;
+export default AdminBlotterDetailScreen;

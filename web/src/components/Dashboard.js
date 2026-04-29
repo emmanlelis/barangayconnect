@@ -142,6 +142,89 @@ const Dashboard = () => {
     _id: `${trend._id?.month}/${trend._id?.year}`
   }));
 
+  const counterCards = [
+    {
+      key: 'total',
+      title: 'Total Blotters',
+      value: stats.totalComplaints || 0,
+      icon: <FileTextOutlined />,
+      to: '/blotters',
+      theme: { background: '#eef4ff', border: '#c9d8ff', accent: '#2457d6' }
+    },
+    {
+      key: 'new-app',
+      title: 'New App Blotter Submission',
+      value: stats.newAppBlotters || 0,
+      icon: <FileTextOutlined />,
+      to: '/blotters/new',
+      theme: { background: '#fff4e5', border: '#ffd8a8', accent: '#d97706' }
+    },
+    {
+      key: 'no-mediation',
+      title: 'New/No Mediation Needed',
+      value: stats.ongoingNoMediation || 0,
+      icon: <CheckCircleOutlined />,
+      to: '/blotters/ongoing/no-mediation',
+      theme: { background: '#ecfeff', border: '#a5f3fc', accent: '#0891b2' }
+    },
+    {
+      key: 'first-mediation',
+      title: 'New/1st Mediation Blotters',
+      value: stats.newOngoingBlotters || 0,
+      icon: <ClockCircleOutlined />,
+      to: '/blotters/ongoing/new',
+      theme: { background: '#ecfdf3', border: '#bbf7d0', accent: '#15803d' }
+    },
+    {
+      key: 'second-mediation',
+      title: '2nd Mediation',
+      value: stats.ongoing2ndMediation || 0,
+      icon: <ExclamationCircleOutlined />,
+      to: '/blotters/ongoing/2nd-mediation',
+      theme: { background: '#fff7ed', border: '#fed7aa', accent: '#ea580c' }
+    },
+    {
+      key: 'third-mediation',
+      title: '3rd Mediation',
+      value: stats.ongoing3rdMediation || 0,
+      icon: <WarningOutlined />,
+      to: '/blotters/ongoing/3rd-mediation',
+      theme: { background: '#fdf4ff', border: '#f5d0fe', accent: '#c026d3' }
+    },
+    {
+      key: 'no-show',
+      title: 'No Show Blotters',
+      value: stats.noShowBlotters || 0,
+      icon: <ExclamationCircleOutlined />,
+      to: '/blotters/closed/no-show',
+      theme: { background: '#fff1f2', border: '#fecdd3', accent: '#be123c' }
+    },
+    {
+      key: 'resolved',
+      title: 'Resolved Blotters',
+      value: stats.resolvedBlotters || 0,
+      icon: <CheckCircleOutlined />,
+      to: '/blotters/closed/resolved',
+      theme: { background: '#ecfdf3', border: '#bbf7d0', accent: '#15803d' }
+    },
+    {
+      key: 'certificate-action',
+      title: 'Certificate to File',
+      value: stats.certificateAction || 0,
+      icon: <FileTextOutlined />,
+      to: '/blotters/closed/certificate-action',
+      theme: { background: '#f5f3ff', border: '#ddd6fe', accent: '#7c3aed' }
+    },
+    {
+      key: 'lupon',
+      title: 'Lupon ng Tagapamayapa',
+      value: stats.luponBlotters || 0,
+      icon: <BarChartOutlined />,
+      to: '/blotters/lupon',
+      theme: { background: '#fff7ed', border: '#fed7aa', accent: '#ea580c' }
+    }
+  ];
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ background: '#001529', padding: '0 24px' }}>
@@ -168,106 +251,31 @@ const Dashboard = () => {
 
             {/* Statistics Cards */}
             <Row gutter={[16, 16]} style={{ marginBottom: '24px' }}>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Total Blotters"
-                    value={stats.totalComplaints || 0}
-                    prefix={<FileTextOutlined />}
-                    valueStyle={{ color: '#1890ff' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="New App Blotter Submission"
-                    value={stats.newAppBlotters || 0}
-                    prefix={<FileTextOutlined />}
-                    valueStyle={{ color: '#faad14' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="New/No Mediation Needed"
-                    value={stats.ongoingNoMediation || 0}
-                    prefix={<CheckCircleOutlined />}
-                    valueStyle={{ color: '#13c2c2' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="New/1st Mediation Blotters"
-                    value={stats.newOngoingBlotters || 0}
-                    prefix={<ClockCircleOutlined />}
-                    valueStyle={{ color: '#1890ff' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="2nd Mediation"
-                    value={stats.ongoing2ndMediation || 0}
-                    prefix={<ExclamationCircleOutlined />}
-                    valueStyle={{ color: '#ff7a45' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="3rd Mediation"
-                    value={stats.ongoing3rdMediation || 0}
-                    prefix={<WarningOutlined />}
-                    valueStyle={{ color: '#eb2f96' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="No Show Blotters"
-                    value={stats.noShowBlotters || 0}
-                    prefix={<ExclamationCircleOutlined />}
-                    valueStyle={{ color: '#f5222d' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Resolved Blotters"
-                    value={stats.resolvedBlotters || 0}
-                    prefix={<CheckCircleOutlined />}
-                    valueStyle={{ color: '#52c41a' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Certificate to File"
-                    value={stats.certificateAction || 0}
-                    prefix={<FileTextOutlined />}
-                    valueStyle={{ color: '#722ed1' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Lupon ng Tagapamayapa"
-                    value={stats.luponBlotters || 0}
-                    prefix={<BarChartOutlined />}
-                    valueStyle={{ color: '#13c2c2' }}
-                  />
-                </Card>
-              </Col>
+              {counterCards.map((card) => (
+                <Col xs={24} sm={12} md={6} key={card.key}>
+                  <Card
+                    hoverable
+                    onClick={() => navigate(card.to)}
+                    style={{
+                      background: card.theme.background,
+                      border: `1px solid ${card.theme.border}`,
+                      borderRadius: 12,
+                      cursor: 'pointer'
+                    }}
+                    bodyStyle={{ padding: 16 }}
+                  >
+                    <Statistic
+                      title={card.title}
+                      value={card.value}
+                      prefix={card.icon}
+                      valueStyle={{ color: card.theme.accent }}
+                    />
+                    <div style={{ marginTop: 10, color: card.theme.accent, fontSize: 12, fontWeight: 600 }}>
+                      View Section
+                    </div>
+                  </Card>
+                </Col>
+              ))}
             </Row>
 
             {/* Charts */}

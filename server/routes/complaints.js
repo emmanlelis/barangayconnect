@@ -1,14 +1,20 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const Complaint = require('../models/Complaint');
+const Blotter = require('../models/Blotter');
 const { protectUser, protectAdmin, optionalAuth } = require('../middleware/auth');
+const {
+  createNotification,
+  getSubmissionNotification,
+  getStatusNotification
+} = require('../services/notificationService');
 
 const router = express.Router();
 
 // @desc    Submit a new complaint
 // @route   POST /api/complaints
 // @access  Private (User) or Public (for anonymous)
-router.post('/', [
+router.post('/', optionalAuth, [
   body('title').notEmpty().withMessage('Complaint title is required'),
   body('description').notEmpty().withMessage('Description is required'),
   body('category').isIn([
@@ -40,7 +46,7 @@ router.post('/', [
       });
     }
 
-    const { title, description, category, priority, location, coordinates, isAnonymous, anonymousContact, images } = req.body;
+    const { title, description, category, priority, location, coordinates, isAnonymous, anonymousContact, images, isFilingComplaintAgainstSomeone, respondentName, respondentRelationship, respondentAddress } = req.body;
 
     let complaintData = {
       title,
@@ -50,18 +56,18 @@ router.post('/', [
       location,
       coordinates,
       isAnonymous,
+      isFilingComplaintAgainstSomeone: isFilingComplaintAgainstSomeone === true || isFilingComplaintAgainstSomeone === 'true',
+      respondentName: respondentName || '',
+      respondentRelationship: respondentRelationship || '',
+      respondentAddress: respondentAddress || '',
       images: images || []
     };
 
+    let createdBlotter = null;
+
     // Handle user vs anonymous submission
     if (isAnonymous) {
-      if (!anonymousContact) {
-        return res.status(400).json({
-          success: false,
-          message: 'Anonymous contact information is required for anonymous complaints'
-        });
-      }
-      complaintData.anonymousContact = anonymousContact;
+      complaintData.anonymousContact = anonymousContact || '';
       complaintData.user = null; // Will be set to a system user ID
     } else {
       // Check if user is authenticated
@@ -76,6 +82,62 @@ router.post('/', [
 
     // Create complaint
     const complaint = await Complaint.create(complaintData);
+
+    // Mirror mobile submissions into Blotter collection so they appear in Web Admin's
+    // "New App Blotters" bucket (status: "new").
+    try {
+      const year = new Date().getFullYear();
+      const lastBlotter = await Blotter.findOne().sort({ createdAt: -1 });
+      let caseNumber = `BL-${year}-001`;
+
+      if (lastBlotter?.caseNumber) {
+        const parts = lastBlotter.caseNumber.split('-');
+        const lastYear = parseInt(parts[1], 10);
+        const lastNum = parseInt(parts[2], 10);
+
+        if (lastYear === year && !Number.isNaN(lastNum)) {
+          caseNumber = `BL-${year}-${String(lastNum + 1).padStart(3, '0')}`;
+        }
+      }
+
+      const complainantName = isAnonymous
+        ? 'Anonymous App User'
+        : `${req.user.firstName} ${req.user.lastName}`.trim();
+
+      // Use questionnaire respondent name if provided, otherwise default to Unspecified
+      const blotterRespondentName = respondentName || 'Unspecified Respondent';
+
+      createdBlotter = await Blotter.create({
+        caseNumber,
+        complainant: complainantName,
+        complainantUser: req.user?._id || null, // Track submitter for both anonymous and non-anonymous
+        respondent: blotterRespondentName,
+        description: `${title}\n\n${description}`,
+        location,
+        status: 'new',
+        caseType: 'regular',
+        isAnonymous: isAnonymous,
+        priority: priority || 'Medium',
+        sourceComplaint: complaint._id,
+        isFilingComplaintAgainstSomeone: isFilingComplaintAgainstSomeone === true || isFilingComplaintAgainstSomeone === 'true',
+        respondentName: respondentName || '',
+        respondentRelationship: respondentRelationship || '',
+        respondentAddress: respondentAddress || '',
+        notes: isAnonymous
+          ? `Source: Mobile App (Anonymous). Contact: ${anonymousContact || 'N/A'}`
+          : `Source: Mobile App. Complaint ID: ${complaint._id}`,
+      });
+
+      if (!isAnonymous && req.user?._id) {
+        await createNotification({
+          recipient: req.user._id,
+          ...getSubmissionNotification({ ...complaint.toObject(), caseNumber })
+        });
+      }
+    } catch (blotterError) {
+      // Do not fail complaint submission if blotter mirroring has an issue.
+      console.error('Mirror to blotter error:', blotterError);
+    }
 
     // Populate user info for response
     await complaint.populate('user', 'firstName lastName email');
@@ -100,7 +162,14 @@ router.post('/', [
             firstName: complaint.user.firstName,
             lastName: complaint.user.lastName
           }
-        }
+          },
+          blotter: createdBlotter
+            ? {
+                id: createdBlotter._id,
+                caseNumber: createdBlotter.caseNumber,
+                status: createdBlotter.status
+              }
+            : null
       }
     });
   } catch (error) {
@@ -122,10 +191,6 @@ router.get('/my', protectUser, async (req, res) => {
     // Build filter
     const filter = { user: req.user._id };
     
-    if (status) {
-      filter.status = status;
-    }
-    
     if (category) {
       filter.category = category;
     }
@@ -138,12 +203,208 @@ router.get('/my', protectUser, async (req, res) => {
       .limit(parseInt(limit))
       .select('-adminNotes -statusHistory');
 
-    const total = await Complaint.countDocuments(filter);
+    const manualBlottersForUser = await Blotter.find({
+      isDeleted: false,
+      complainantUser: req.user._id
+    })
+      .populate('defendantUser', 'firstName lastName email')
+      .sort({ createdAt: -1 });
+
+    const mapBlotterStatusToAppStatus = (blotterStatus, defaultStatus) => {
+      const statusMap = {
+        new: 'Pending',
+        ongoing: 'In Progress',
+        'ongoing-no-mediation': 'In Progress',
+        'ongoing-2nd': 'In Progress',
+        'ongoing-3rd': 'In Progress',
+        lupon: 'In Progress',
+        resolved: 'Resolved',
+        'no-show': 'No Show',
+        'certificate-action': 'No Show'
+      };
+      return statusMap[blotterStatus] || defaultStatus;
+    };
+
+    const mapStatusToProgress = (appStatus) => {
+      const statusProgressMap = {
+        Pending: 0,
+        'In Progress': 50,
+        Resolved: 100,
+        'No Show': 100,
+        Rejected: 0
+      };
+      return statusProgressMap[appStatus] ?? 0;
+    };
+
+    const normalizeText = (value) =>
+      (value || '')
+        .toString()
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const complaintIds = complaints.map((item) => item._id.toString());
+    let blotterMap = new Map();
+
+    if (complaintIds.length > 0) {
+      const noteMatchers = complaintIds.map((id) => ({
+        notes: { $regex: `Complaint ID:\\s*${id}`, $options: 'i' }
+      }));
+
+      const blotterMatches = await Blotter.find({
+        isDeleted: false,
+        $or: [
+          { sourceComplaint: { $in: complaintIds } },
+          ...noteMatchers
+        ]
+      })
+        .populate('defendantUser', 'firstName lastName email')
+        .sort({ createdAt: -1 });
+
+      const getComplaintIdFromBlotter = (blotter) => {
+        if (blotter.sourceComplaint) {
+          return blotter.sourceComplaint.toString();
+        }
+
+        const notes = blotter.notes || '';
+        const match = notes.match(/Complaint ID:\s*([a-f0-9]{24})/i);
+        return match ? match[1] : null;
+      };
+
+      blotterMatches.forEach((blotter) => {
+        const complaintId = getComplaintIdFromBlotter(blotter);
+        if (complaintId && !blotterMap.has(complaintId)) {
+          blotterMap.set(complaintId, blotter);
+        }
+      });
+
+      // Fallback for older mirrored records where notes were later overwritten,
+      // but the blotter is already moved by admin to ongoing buckets.
+      const unresolvedComplaints = complaints.filter(
+        (complaint) => !blotterMap.has(complaint._id.toString())
+      );
+
+      if (unresolvedComplaints.length > 0) {
+        const complainantName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
+
+        const fallbackBlotters = await Blotter.find({
+          isDeleted: false,
+          complainant: complainantName,
+          status: { $in: ['ongoing', 'ongoing-no-mediation'] }
+        })
+          .populate('defendantUser', 'firstName lastName email')
+          .sort({ updatedAt: -1, createdAt: -1 });
+
+        const usedBlotterIds = new Set(Array.from(blotterMap.values()).map((item) => item._id.toString()));
+
+        unresolvedComplaints.forEach((complaint) => {
+          const complaintId = complaint._id.toString();
+          const normalizedTitle = normalizeText(complaint.title);
+          const normalizedDescriptionSnippet = normalizeText(complaint.description).slice(0, 80);
+
+          const candidatePool = fallbackBlotters.filter(
+            (blotter) => !usedBlotterIds.has(blotter._id.toString())
+          );
+
+          let bestMatch = candidatePool.find((blotter) => {
+            const blotterDescription = normalizeText(blotter.description);
+
+            if (normalizedTitle && blotterDescription.includes(normalizedTitle)) {
+              return true;
+            }
+
+            if (normalizedDescriptionSnippet && blotterDescription.includes(normalizedDescriptionSnippet)) {
+              return true;
+            }
+
+            return false;
+          });
+
+          if (!bestMatch && candidatePool.length === 1) {
+            bestMatch = candidatePool[0];
+          }
+
+          if (bestMatch) {
+            blotterMap.set(complaintId, bestMatch);
+            usedBlotterIds.add(bestMatch._id.toString());
+          }
+        });
+      }
+    }
+
+    const manualBlotterCards = manualBlottersForUser.map((blotter) => {
+      const appStatus = mapBlotterStatusToAppStatus(blotter.status, 'Pending');
+      const hasEmailSubpoena = !!(blotter.subpoena?.sentAt && Array.isArray(blotter.subpoena?.sentTo) && blotter.subpoena.sentTo.length > 0);
+
+      return {
+        _id: blotter._id,
+        title: blotter.caseNumber || 'Manual Blotter',
+        description: blotter.description,
+        category: 'Manual Blotter',
+        priority: 'Medium',
+        status: appStatus,
+        progress: mapStatusToProgress(appStatus),
+        createdAt: blotter.createdAt,
+        isAnonymous: blotter.isAnonymous || false,
+        blotterUpdate: {
+          caseNumber: blotter.caseNumber,
+          blotterStatus: blotter.status,
+          mediationDate: blotter.dateOfMeeting || null,
+          mediationTime: blotter.mediationTime || null,
+          subpoenaDelivery: hasEmailSubpoena ? 'email' : 'physical',
+          subpoenaSentAt: blotter.subpoena?.sentAt || null,
+          defendantAttached: !!blotter.defendantUser,
+          complainantAttached: !!blotter.complainantUser
+        }
+      };
+    });
+
+    let enrichedComplaints = complaints.map((complaint) => {
+      const complaintObj = complaint.toObject();
+      const linkedBlotter = blotterMap.get(complaintObj._id.toString());
+
+      if (!linkedBlotter) {
+        return complaintObj;
+      }
+
+      const mappedStatus = mapBlotterStatusToAppStatus(linkedBlotter.status, complaintObj.status);
+      const hasEmailSubpoena = !!(linkedBlotter.subpoena?.sentAt && Array.isArray(linkedBlotter.subpoena?.sentTo) && linkedBlotter.subpoena.sentTo.length > 0);
+
+      return {
+        ...complaintObj,
+        status: mappedStatus,
+        progress: mapStatusToProgress(mappedStatus),
+        blotterUpdate: {
+          caseNumber: linkedBlotter.caseNumber,
+          blotterStatus: linkedBlotter.status,
+          mediationDate: linkedBlotter.dateOfMeeting || null,
+          mediationTime: linkedBlotter.mediationTime || null,
+          subpoenaDelivery: hasEmailSubpoena ? 'email' : 'physical',
+          subpoenaSentAt: linkedBlotter.subpoena?.sentAt || null,
+          defendantAttached: !!linkedBlotter.defendantUser
+        }
+      };
+    });
+
+    const mergedComplaints = [...enrichedComplaints];
+    manualBlotterCards.forEach((manualBlotter) => {
+      mergedComplaints.push(manualBlotter);
+    });
+
+    if (status) {
+      enrichedComplaints = mergedComplaints.filter((complaint) => complaint.status === status);
+    } else {
+      enrichedComplaints = mergedComplaints;
+    }
+
+    const total = status
+      ? enrichedComplaints.length
+      : await Complaint.countDocuments(filter) + manualBlotterCards.length;
 
     res.json({
       success: true,
       data: {
-        complaints,
+        complaints: enrichedComplaints,
         pagination: {
           current: parseInt(page),
           total: Math.ceil(total / limit),
@@ -244,6 +505,18 @@ router.put('/:id/status', [
 
     // Add status change to history
     await complaint.addStatusChange(status, req.admin._id, note);
+
+    if (complaint.user) {
+      const linkedBlotter = await Blotter.findOne({
+        isDeleted: false,
+        sourceComplaint: complaint._id
+      }).select('caseNumber status');
+
+      await createNotification({
+        recipient: complaint.user,
+        ...getStatusNotification(linkedBlotter || { status, caseNumber: complaint._id })
+      });
+    }
 
     res.json({
       success: true,

@@ -1,8 +1,13 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 // API Configuration
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  (Platform.OS === 'android'
+    ? 'http://10.0.2.2:5000/api'
+    : 'http://localhost:5000/api');
 
 // Create axios instance
 const api = axios.create({
@@ -63,6 +68,31 @@ export const authAPI = {
     }
   },
 
+  // Start authenticator setup before completing registration
+  sendRegistrationOtp: async (userData) => {
+    try {
+      const response = await api.post('/auth/register/send-otp', userData);
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to create authenticator setup' };
+    }
+  },
+
+  // Verify authenticator code and complete registration
+  verifyRegistrationOtp: async (verificationData) => {
+    try {
+      const response = await api.post('/auth/register/verify-otp', verificationData);
+      if (response.data.success) {
+        await SecureStore.setItemAsync('authToken', response.data.data.token);
+        await SecureStore.setItemAsync('isAdmin', 'false');
+        await SecureStore.setItemAsync('userInfo', JSON.stringify(response.data.data.user));
+      }
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to verify authenticator code' };
+    }
+  },
+
   // Login user/admin
   login: async (credentials) => {
     try {
@@ -81,6 +111,26 @@ export const authAPI = {
       return response.data;
     } catch (error) {
       throw error.response?.data || { message: 'Login failed' };
+    }
+  },
+
+  // Request password reset code
+  forgotPassword: async (identifier) => {
+    try {
+      const response = await api.post('/auth/forgot-password', { identifier });
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to request password reset' };
+    }
+  },
+
+  // Reset password using code
+  resetPassword: async (payload) => {
+    try {
+      const response = await api.post('/auth/reset-password', payload);
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to reset password' };
     }
   },
 
@@ -139,39 +189,82 @@ export const authAPI = {
   }
 };
 
+// Blotter Services
+export const blotterAPI = {
+  // Get blotters received by current user
+  getMyReceivedBlotters: async (filters = {}) => {
+    try {
+      const response = await api.get('/blotters/received', { params: filters });
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to get received blotters' };
+    }
+  }
+};
+
+// Notification Services
+export const notificationAPI = {
+  getMyNotifications: async (filters = {}) => {
+    try {
+      const response = await api.get('/notifications', { params: filters });
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to get notifications' };
+    }
+  },
+
+  markAsRead: async (notificationId) => {
+    try {
+      const response = await api.put(`/notifications/${notificationId}/read`);
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to mark notification as read' };
+    }
+  },
+
+  markAllAsRead: async () => {
+    try {
+      const response = await api.put('/notifications/read-all');
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to mark notifications as read' };
+    }
+  }
+};
+
 // Complaint Services
 export const complaintAPI = {
-  // Submit new complaint
+  // Submit new blotter
   submit: async (complaintData) => {
     try {
       const response = await api.post('/complaints', complaintData);
       return response.data;
     } catch (error) {
-      throw error.response?.data || { message: 'Failed to submit complaint' };
+      throw error.response?.data || { message: 'Failed to submit blotter' };
     }
   },
 
-  // Get user's complaints
+  // Get user's blotters
   getMyComplaints: async (filters = {}) => {
     try {
       const response = await api.get('/complaints/my', { params: filters });
       return response.data;
     } catch (error) {
-      throw error.response?.data || { message: 'Failed to get complaints' };
+      throw error.response?.data || { message: 'Failed to get blotters' };
     }
   },
 
-  // Get single complaint details
+  // Get single blotter details
   getComplaint: async (id) => {
     try {
       const response = await api.get(`/complaints/${id}`);
       return response.data;
     } catch (error) {
-      throw error.response?.data || { message: 'Failed to get complaint' };
+      throw error.response?.data || { message: 'Failed to get blotter' };
     }
   },
 
-  // Submit feedback for resolved complaint
+  // Submit feedback for resolved blotter
   submitFeedback: async (id, feedback) => {
     try {
       const response = await api.post(`/complaints/${id}/feedback`, feedback);
@@ -212,7 +305,7 @@ export const uploadAPI = {
     }
   },
 
-  // Upload complaint images
+  // Upload blotter images
   uploadComplaintImages: async (formData) => {
     try {
       const response = await api.post('/upload/complaint', formData, {
@@ -222,7 +315,7 @@ export const uploadAPI = {
       });
       return response.data;
     } catch (error) {
-      throw error.response?.data || { message: 'Failed to upload complaint images' };
+      throw error.response?.data || { message: 'Failed to upload blotter images' };
     }
   },
 
@@ -230,6 +323,20 @@ export const uploadAPI = {
   uploadProfilePicture: async (formData) => {
     try {
       const response = await api.post('/upload/profile', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || { message: 'Failed to upload profile picture' };
+    }
+  },
+
+  // Upload profile picture before login (signup)
+  uploadPublicProfilePicture: async (formData) => {
+    try {
+      const response = await api.post('/upload/public-profile', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -286,23 +393,23 @@ export const adminAPI = {
     }
   },
 
-  // Get all complaints
+  // Get all blotters
   getComplaints: async (filters = {}) => {
     try {
       const response = await api.get('/admin/complaints', { params: filters });
       return response.data;
     } catch (error) {
-      throw error.response?.data || { message: 'Failed to get complaints' };
+      throw error.response?.data || { message: 'Failed to get blotters' };
     }
   },
 
-  // Update complaint status
+  // Update blotter status
   updateComplaintStatus: async (id, statusData) => {
     try {
       const response = await api.put(`/complaints/${id}/status`, statusData);
       return response.data;
     } catch (error) {
-      throw error.response?.data || { message: 'Failed to update complaint status' };
+      throw error.response?.data || { message: 'Failed to update blotter status' };
     }
   },
 
@@ -316,13 +423,13 @@ export const adminAPI = {
     }
   },
 
-  // Assign complaint
+  // Assign blotter
   assignComplaint: async (id, assignData) => {
     try {
       const response = await api.put(`/complaints/${id}/assign`, assignData);
       return response.data;
     } catch (error) {
-      throw error.response?.data || { message: 'Failed to assign complaint' };
+      throw error.response?.data || { message: 'Failed to assign blotter' };
     }
   },
 
