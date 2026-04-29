@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, Typography, App as AntApp } from 'antd';
+import { Form, Input, Button, Card, Typography, App as AntApp, Modal } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -55,8 +55,8 @@ const Login = () => {
       } else {
         // Login successful - redirect to dashboard
         console.log('Login successful, redirecting...');
-        // Force page reload to ensure AuthContext state is properly set
-        window.location.href = '/';
+        Modal.destroyAll();
+        navigate('/', { replace: true });
       }
     } catch (error) {
       setError('Login failed');

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Modal } from 'antd';
 import api from '../services/api';
 
 const AuthContext = createContext();
@@ -84,6 +85,7 @@ export const AuthProvider = ({ children }) => {
       if (response.data.success && response.data.data.isAdmin) {
         const { token, admin } = response.data.data;
         
+        Modal.destroyAll();
         localStorage.setItem('adminToken', token);
         localStorage.setItem('adminUser', JSON.stringify(admin));
         api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
@@ -125,6 +127,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = () => {
+    Modal.destroyAll();
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminUser');
     delete api.defaults.headers.common['Authorization'];
