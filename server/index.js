@@ -36,8 +36,39 @@ const configuredCorsOrigins = [
 ];
 const corsOrigins = configuredCorsOrigins.length > 0 ? configuredCorsOrigins : defaultCorsOrigins;
 
+const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/$/, '');
+const normalizedCorsOrigins = corsOrigins.map(normalizeOrigin);
+const allowOrigin = (origin) => {
+  if (!origin) {
+    return true;
+  }
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (normalizedCorsOrigins.includes(normalizedOrigin)) {
+    return true;
+  }
+
+  // Keep deployments flexible while frontend/backend run on Render subdomains.
+  if (/^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(normalizedOrigin)) {
+    return true;
+  }
+
+  if (/^http:\/\/localhost:(3000|3001)$/i.test(normalizedOrigin)) {
+    return true;
+  }
+
+  return false;
+};
+
 app.use(cors({
-  origin: corsOrigins,
+  origin: (origin, callback) => {
+    if (allowOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('CORS origin not allowed'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
