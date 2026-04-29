@@ -73,6 +73,12 @@ const findUserForReset = async (identifier) => {
   }
 
   if (normalizedIdentifier.includes('@')) {
+    // Check admin first, then regular user
+    let admin = await Admin.findOne({ email: normalizedIdentifier }).select('+password +authenticatorSecret');
+    if (admin) {
+      admin.isAdmin = true;
+      return admin;
+    }
     return User.findOne({ email: normalizedIdentifier }).select('+password +authenticatorSecret');
   }
 
