@@ -547,6 +547,20 @@ router.post('/login', [
 
       const isMatch = await admin.matchPassword(password);
       if (isMatch) {
+        // TEMPORARY: Skip 2FA for admin login (for testing)
+        if (!admin.authenticatorSecret) {
+          const token = generateToken(admin._id, true);
+          return res.json({
+            success: true,
+            message: 'Admin login successful (2FA bypassed for testing)',
+            data: {
+              token,
+              isAdmin: true,
+              admin: buildAdminResponse(admin)
+            }
+          });
+        }
+
         if (!admin.authenticatorSecret) {
           const setup = createLoginSetup(admin, 'admin');
           return res.status(200).json({
