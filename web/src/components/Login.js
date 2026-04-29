@@ -3,6 +3,7 @@ import { Form, Input, Button, Card, Typography, App as AntApp } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import ForgotPassword from './ForgotPassword';
 import './Login.css';
 
 const { Title, Text } = Typography;
@@ -17,6 +18,7 @@ const Login = () => {
   const [otpAuthUrl, setOtpAuthUrl] = useState('');
   const [accountLabel, setAccountLabel] = useState('');
   const [pendingCredentials, setPendingCredentials] = useState({ email: '', password: '' });
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -63,6 +65,10 @@ const Login = () => {
     }
   };
 
+  if (showForgotPassword) {
+    return <ForgotPassword onBack={() => setShowForgotPassword(false)} />;
+  }
+
   return (
     <AntApp>
       <div className="login-container">
@@ -104,6 +110,16 @@ const Login = () => {
                     size="large"
                   />
                 </Form.Item>
+
+                <div style={{ textAlign: 'right', marginBottom: 12 }}>
+                  <Button 
+                    type="link" 
+                    onClick={() => setShowForgotPassword(true)}
+                    style={{ padding: 0 }}
+                  >
+                    Forgot password?
+                  </Button>
+                </div>
               </>
             )}
 
