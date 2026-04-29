@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Form, Input, Button, Card, Typography, App as AntApp } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import './Login.css';
 
@@ -17,6 +18,7 @@ const Login = () => {
   const [accountLabel, setAccountLabel] = useState('');
   const [pendingCredentials, setPendingCredentials] = useState({ email: '', password: '' });
   const { login } = useAuth();
+  const navigate = useNavigate();
 
   const onFinish = async (values) => {
     setLoading(true);
@@ -47,6 +49,9 @@ const Login = () => {
         } else {
           setError(result.error || 'Login failed');
         }
+      } else {
+        // Login successful - redirect to dashboard
+        navigate('/');
       }
     } catch (error) {
       setError('Login failed');
