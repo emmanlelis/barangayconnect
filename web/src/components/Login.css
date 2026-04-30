@@ -15,16 +15,20 @@
   border: none;
 }
 
+.login-card .ant-card-body {
+  padding: 40px 32px 32px;
+}
+
 .login-header {
   text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
 }
 
 .login-logo {
-  width: 180px;
-  height: 180px;
+  width: 144px;
+  height: 144px;
   object-fit: contain;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .login-title {

@@ -79,7 +79,6 @@ const Login = () => {
               alt="BarangayConnect Logo"
               className="login-logo"
             />
-            <Title level={2}>BarangayConnect Admin</Title>
             <Text type="secondary">Login to manage complaints</Text>
           </div>
           
