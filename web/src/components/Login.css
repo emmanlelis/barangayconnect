@@ -20,15 +20,20 @@
 }
 
 .login-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   margin-bottom: 24px;
 }
 
 .login-logo {
-  width: 144px;
-  height: 144px;
+  display: block;
+  width: 200px;
+  height: 200px;
   object-fit: contain;
-  margin-bottom: 16px;
+  margin: 0 auto 16px;
 }
 
 .login-title {
@@ -38,6 +43,9 @@
 }
 
 .login-subtitle {
+  display: block;
+  width: 100%;
+  text-align: center;
   color: #666;
   font-size: 14px;
 }
@@ -79,5 +87,10 @@
   
   .login-card {
     max-width: 100%;
+  }
+
+  .login-logo {
+    width: 170px;
+    height: 170px;
   }
 }

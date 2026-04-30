@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import ForgotPassword from './ForgotPassword';
 import './Login.css';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
@@ -79,7 +79,7 @@ const Login = () => {
               alt="BarangayConnect Logo"
               className="login-logo"
             />
-            <Text type="secondary">Login to manage complaints</Text>
+            <Text type="secondary" className="login-subtitle">Login to manage blotters</Text>
           </div>
           
           <Form
